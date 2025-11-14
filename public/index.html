@@ -720,6 +720,7 @@
                     // Check if both ready
                     const p1 = newP[0], p2 = newP[1];
                     if(p1.nexusLocation && (newP.length === 1 || p2?.nexusLocation)) {
+                        updates.status = 'inProgress';
                         updates.phase = 'buyMove';
                         const newEnergyPool = State.game.maxEnergy;
                         updates.energyPool = newEnergyPool;
@@ -857,7 +858,12 @@
                         log: [...State.game.log, "Attack Skipped."]
                     });
                 },
-
+                cancelAttack: async () => {
+                    await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+                        phase: 'buyMove',
+                        log: [...State.game.log, "Attack canceled."]
+                    });
+                },
                 commitAndEndTurn: async (buildingsToPlace, nexusMoveLocation) => {
                     const newP = JSON.parse(JSON.stringify(State.game.players));
                     const myP = newP[State.playerIndex];
@@ -1747,7 +1753,7 @@
                         API.game.attack(dir[0], dir[1]);
                     };
                 });
-                DOM.$('#skip-attack-btn').onclick = API.game.skipAttack;
+                DOM.$('#skip-attack-btn').onclick = API.game.cancelAttack;
             },
             
             // NEW: Handler for sending invites
@@ -1971,7 +1977,7 @@
             </div>
 
             <div class="w-full md:w-64 lg:w-80 flex-shrink-0 p-4 bg-gray-900/80 rounded-lg border border-gray-700">
-                <h3 class="text-sm font-bold text-gray-400 uppercase tracking-widest mb-3 border-b border-gray-700 pb-2">Online / LFG</h3>
+                <h3 class="text-sm font-bold text-gray-400 uppercase tracking-widest mb-3 border-b border-gray-700 pb-2">Online / Looking For Game</h3>
                 <div class="online-players-list space-y-1 max-h-96 overflow-y-auto text-sm">
                     <p class="text-gray-500 italic">Scanning...</p>
                 </div>
@@ -2101,7 +2107,7 @@
                                 <button id="attack-se-btn" data-dir="SE" class="aspect-square bg-red-800 hover:bg-red-700 rounded-lg font-bold">SE</button>
                             </div>
                             <hr class="border-gray-600 my-3">
-                            <button id="skip-attack-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold p-3 rounded-lg text-lg">Hold Fire</button>
+                            <button id="skip-attack-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold p-3 rounded-lg text-lg">Cancel</button>
                         </div>
 
                         <div id="waiting-controls" class="hidden text-center">
