@@ -201,7 +201,6 @@
                 profile: document.querySelector('#profile-view'),
                 lobby: document.querySelector('#lobby-view'),
                 lobbyList: document.querySelector('#lobby-list-view'),
-                createLobby: document.querySelector('#create-lobby-view'),
                 waitingRoom: document.querySelector('#waiting-room-view'),
                 game: document.querySelector('#game-view'),
                 modal: document.querySelector('#modal-view')
@@ -682,44 +681,44 @@
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
                 },
                 confirmBuyMovePhase: async (buildingsToPlace, nexusMoveLocation) => {
-                const newP = JSON.parse(JSON.stringify(State.game.players));
-                const myP = newP[State.playerIndex];
-
-                let totalCost = 0;
-                let newLogs = [...State.game.log];
-                if (nexusMoveLocation) {
-                    myP.nexusLocation = nexusMoveLocation;
-                    newLogs.push(`Nexus moved.`);
-                }
-
-                buildingsToPlace.forEach(b => {
-                    const newBuilding = { type: b.type, location: b.location, hp: CONSTANTS.BUILDING_HP };
-                    if (b.type === 'mirror') {
-                        newBuilding.orientation = b.orientation || 'N';
-                        newLogs.push(`Placed ${newBuilding.orientation} Mirror.`);
-                    } else {
-                        newLogs.push(`Placed ${b.type}.`);
-                    }
-                    myP.buildings.push(newBuilding);
-                    totalCost += 1; // Assuming all cost 1
-                });
-
-                await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                    players: newP,
-                    energyPool: State.game.energyPool - totalCost,
-                    turnBudget: State.game.turnBudget - totalCost,
-                    phase: 'attack',
-                    log: [...newLogs, "Attack Phase."]
-                });
-            },
-                moveNexus: async (to) => {
                     const newP = JSON.parse(JSON.stringify(State.game.players));
-                    newP[State.playerIndex].nexusLocation = to;
+                    const myP = newP[State.playerIndex];
+
+                    let totalCost = 0;
+                    let newLogs = [...State.game.log];
+                    if (nexusMoveLocation) {
+                        myP.nexusLocation = nexusMoveLocation;
+                        newLogs.push(`Nexus moved.`);
+                    }
+
+                    buildingsToPlace.forEach(b => {
+                        const newBuilding = { type: b.type, location: b.location, hp: CONSTANTS.BUILDING_HP };
+                        if (b.type === 'mirror') {
+                            newBuilding.orientation = b.orientation || 'N';
+                            newLogs.push(`Placed ${newBuilding.orientation} Mirror.`);
+                        } else {
+                            newLogs.push(`Placed ${b.type}.`);
+                        }
+                        myP.buildings.push(newBuilding);
+                        totalCost += 1; // Assuming all cost 1
+                    });
+
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
                         players: newP,
-                        log: [...State.game.log, "Nexus Moved."]
+                        energyPool: State.game.energyPool - totalCost,
+                        turnBudget: State.game.turnBudget - totalCost,
+                        phase: 'attack',
+                        log: [...newLogs, "Attack Phase."]
                     });
                 },
+                // moveNexus: async (to) => {
+                //     const newP = JSON.parse(JSON.stringify(State.game.players));
+                //     newP[State.playerIndex].nexusLocation = to;
+                //     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+                //         players: newP,
+                //         log: [...State.game.log, "Nexus Moved."]
+                //     });
+                // },
                 endPhase: async () => {
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
                         phase: 'attack',
@@ -1605,10 +1604,6 @@
                     }
                 };
                 
-                // --- Old Create Lobby Handlers (now unused) ---
-                DOM.$('#create-lobby-btn').onclick = () => API.lobby.create(DOM.$('#lobby-name-input').value, DOM.$('#energy-pool-select').value, DOM.$('#host-color-select').value);
-                DOM.$('#cancel-create-lobby-btn').onclick = () => UIManager.show('lobbyList');
-
                 // --- Waiting Room & Modal ---
                 DOM.$('#leave-lobby-btn').onclick = API.lobby.leave;
                 DOM.$('#back-to-main-menu-btn').onclick = () => UIManager.show('lobby');
@@ -1807,33 +1802,6 @@
         .cell {
             box-shadow: inset 0 0 2px rgba(167, 139, 250, 0.2);
         }
-        .shroud-wall {
-            background-image: repeating-linear-gradient(
-                45deg,
-                rgba(0, 0, 0, 0.1),
-                rgba(0, 0, 0, 0.1) 1px,
-                transparent 1px,
-                transparent 10px
-            );
-        }
-        
-        .unit {
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
-            opacity: 0.9;
-            filter: drop-shadow(0 0 8px currentColor);
-        }
-        .hp {
-            position: absolute;
-            bottom: 2px;
-            right: 4px;
-            font-size: 0.7rem;
-            font-weight: bold;
-            color: white;
-            background-color: rgba(0,0,0,0.5);
-            padding: 0 3px;
-            border-radius: 2px;
-        }
 
         /* Laser animation */
         @keyframes laser-wave-pulse {
@@ -1941,32 +1909,6 @@
                 <h3 class="text-sm font-bold text-gray-400 uppercase tracking-widest mb-3 border-b border-gray-700 pb-2">Online / LFG</h3>
                 <div class="online-players-list space-y-1 max-h-96 overflow-y-auto text-sm">
                     <p class="text-gray-500 italic">Scanning...</p>
-                </div>
-            </div>
-        </div>
-
-        <div id="create-lobby-view" class="hidden w-full max-w-md mx-auto p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
-            <h1 class="text-3xl font-bold text-center mb-6 font-sci-mono text-cyan-400">Create Lobby</h1>
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-400 mb-1">Lobby Name</label>
-                    <input id="lobby-name-input-old" type="text" class="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 outline-none">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-400 mb-1">Starting Energy</label>
-                    <select id="energy-pool-select" class="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 outline-none">
-                        <option value="10">Standard (10)</option>
-                        <option value="20">High (20)</option>
-                        <option value="5">Low (5)</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-400 mb-1">Your Color</label>
-                    <select id="host-color-select" class="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 outline-none"></select>
-                </div>
-                <div class="flex gap-4">
-                    <button id="cancel-create-lobby-btn" class="w-1/2 bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-lg">Cancel</button>
-                    <button id="create-lobby-btn" class="w-1/2 bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-4 rounded-lg">Create</button>
                 </div>
             </div>
         </div>
