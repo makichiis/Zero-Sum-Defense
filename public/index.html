@@ -217,8 +217,10 @@
             userId: document.querySelector('#user-id-display'),
             userName: document.querySelector('#user-display-name-display'),
             gameId: document.querySelector('#game-id-display'),
-            playerNum: document.querySelector('#player-number'),
-            turn: document.querySelector('#current-turn'),
+            playerHudLabel: document.querySelector('#player-hud-label'),
+            playerHudInfo: document.querySelector('#player-hud-info'),
+            opponentHudLabel: document.querySelector('#opponent-hud-label'),
+            opponentHudInfo: document.querySelector('#opponent-hud-info'),
             phase: document.querySelector('#current-phase'),
             energy: document.querySelector('#energy-pool'),
             budget: document.querySelector('#player-budget'),
@@ -984,13 +986,33 @@
                     return (c && c.text) ? c.text : 'text-white';
                 };
 
-                const myColorClass = getTextColor(myP.color);
-                const turnColorClass = getTextColor(turnP.color);
+                const opponentP = g.players[(State.playerIndex + 1) % 2];
+                const isMyTurn = g.turn === State.playerIndex;
 
-                // Update HUD
-                DOM.playerNum.innerHTML = `<span class="${myColorClass}">${myP.displayName}</span>`;
-                DOM.turn.innerHTML = `<span class="${turnColorClass}">${turnP.displayName}</span>`;
-                
+                // 1. Set Your Info
+                const myColorClass = getTextColor(myP.color);
+                DOM.playerHudInfo.innerHTML = `<span class="${myColorClass}">${myP.displayName} (HP: ${myP.nexusHP})</span>`;
+
+                // 2. Set Opponent Info
+                if(opponentP) {
+                    const oppColorClass = getTextColor(opponentP.color);
+                    DOM.opponentHudInfo.innerHTML = `<span class="${oppColorClass}">${opponentP.displayName} (HP: ${opponentP.nexusHP})</span>`;
+                } else {
+                    DOM.opponentHudInfo.innerHTML = `<span class="text-gray-500">Waiting... (HP: --)</span>`;
+                }
+                // 3. Set Turn Indicator
+                if(isMyTurn) {
+                    DOM.playerHudLabel.textContent = "Current Turn";
+                    DOM.playerHudLabel.className = "text-xs text-yellow-300 animate-pulse block";
+                    DOM.opponentHudLabel.textContent = "Opponent";
+                    DOM.opponentHudLabel.className = "text-xs text-gray-400 block";
+                } else {
+                    DOM.playerHudLabel.textContent = "You Are";
+                    DOM.playerHudLabel.className = "text-xs text-gray-400 block";
+                    DOM.opponentHudLabel.textContent = "Current Turn";
+                    DOM.opponentHudLabel.className = "text-xs text-yellow-300 animate-pulse block";
+                }
+
                 DOM.phase.textContent = g.phase;
                 DOM.energy.textContent = g.energyPool;
                 
@@ -1122,6 +1144,9 @@
                 DOM.$$('.laser-beam-svg').forEach(el => el.remove());
                 DOM.$$('.laser-active').forEach(el => el.classList.remove('laser-active'));
 
+                const myZoneStart = State.playerIndex === 0 ? 0 : 5;
+                const myZoneEnd = State.playerIndex === 0 ? 5 : CONSTANTS.BOARD_COLS;
+
                 let i = 1;
                 const interval = setInterval(() => {
                     if(i + 1 >= path.length) { 
@@ -1135,81 +1160,86 @@
                     }
 
                     const [r, c] = path[i];
-                    const cell = DOM.$(`[data-r="${r}"][data-c="${c}"]`);
 
-                    if(cell) { 
-                        // 1. Calculate Direction (Delta)
-                        let dr = 0, dc = 0;
-                        const next = path[i+1];
-                        const prev = path[i-1];
+                    // Only render if on my side of the board
+                    const isMySide = (c >= myZoneStart && c < myZoneEnd);
+                    if (isMySide) {
+                        const cell = DOM.$(`[data-r="${r}"][data-c="${c}"]`);
 
-                        if (prev) {
-                            // --- Calculate INCOMING vector ---
-                            const dr_in = r - prev[0];
-                            const dc_in = c - prev[1];
+                        if(cell) { 
+                            // 1. Calculate Direction (Delta)
+                            let dr = 0, dc = 0;
+                            const next = path[i+1];
+                            const prev = path[i-1];
 
-                            // --- Set default vector (use incoming) ---
-                            dr = dr_in;
-                            dc = dc_in;
+                            if (prev) {
+                                // --- Calculate INCOMING vector ---
+                                const dr_in = r - prev[0];
+                                const dc_in = c - prev[1];
 
-                            if (next) {
-                                // --- Calculate OUTGOING vector ---
-                                const dr_out = next[0] - r;
-                                const dc_out = next[1] - c;
+                                // --- Set default vector (use incoming) ---
+                                dr = dr_in;
+                                dc = dc_in;
 
-                                // --- CORNER LOGIC ---
-                                // Check if incoming was Straight (H or V)
-                                const isIncomingStraight = (dr_in === 0 || dc_in === 0);
-                                // Check if outgoing is Diagonal
-                                const isOutgoingDiagonal = (dr_out !== 0 && dc_out !== 0);
+                                if (next) {
+                                    // --- Calculate OUTGOING vector ---
+                                    const dr_out = next[0] - r;
+                                    const dc_out = next[1] - c;
 
-                                if (isIncomingStraight && isOutgoingDiagonal) {
-                                    // This is the "skid" cell turning into a diagonal.
-                                    // Override the vector to use the OUTGOING one.
-                                    dr = dr_out;
-                                    dc = dc_out;
+                                    // --- CORNER LOGIC ---
+                                    // Check if incoming was Straight (H or V)
+                                    const isIncomingStraight = (dr_in === 0 || dc_in === 0);
+                                    // Check if outgoing is Diagonal
+                                    const isOutgoingDiagonal = (dr_out !== 0 && dc_out !== 0);
+
+                                    if (isIncomingStraight && isOutgoingDiagonal) {
+                                        // This is the "skid" cell turning into a diagonal.
+                                        // Override the vector to use the OUTGOING one.
+                                        dr = dr_out;
+                                        dc = dc_out;
+                                    }
                                 }
+                                // (else, it's the end of the line, default (dr_in, dc_in) is correct)
+                            } else if (next) { 
+                                // Start of line: Calculate based on where we are going
+                                dr = next[0] - r;
+                                dc = next[1] - c;
                             }
-                            // (else, it's the end of the line, default (dr_in, dc_in) is correct)
-                        } else if (next) { 
-                            // Start of line: Calculate based on where we are going
-                            dr = next[0] - r;
-                            dc = next[1] - c;
+
+                            // 2. Determine Line Coordinates based on Delta
+                            // Default to Center-Center (dot) if no movement
+                            let x1 = "50%", y1 = "50%", x2 = "50%", y2 = "50%";
+
+                            if (dr === 0 && dc !== 0) { 
+                                // Horizontal (-)
+                                x1 = "0%"; y1 = "50%"; x2 = "100%"; y2 = "50%";
+                            } else if (dr !== 0 && dc === 0) { 
+                                // Vertical (|)
+                                x1 = "50%"; y1 = "0%"; x2 = "50%"; y2 = "100%";
+                            } else if ((dr === 1 && dc === 1) || (dr === -1 && dc === -1)) { 
+                                // Diagonal Main (\) (NW to SE or SE to NW)
+                                x1 = "0%"; y1 = "0%"; x2 = "100%"; y2 = "100%";
+                            } else if ((dr === 1 && dc === -1) || (dr === -1 && dc === 1)) { 
+                                // Diagonal Anti (/) (NE to SW or SW to NE)
+                                x1 = "100%"; y1 = "0%"; x2 = "0%"; y2 = "100%";
+                            }
+
+                            // 3. Set CSS Var for color (used by CSS animations)
+                            cell.style.setProperty('--laser-color', hex);
+
+                            // 4. Inject SVG Line
+                            const svg = document.createElement('div');
+                            svg.className = 'laser-beam-svg';
+                            svg.innerHTML = `<svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+                                <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${hex}" stroke-width="15" stroke-linecap="round" />
+                            </svg>`;
+                            cell.appendChild(svg);
+
+                            // 5. Trigger Background Pulse
+                            cell.classList.remove('laser-active'); // reset if needed
+                            void cell.offsetWidth; // force reflow
+                            cell.classList.add('laser-active'); 
                         }
-
-                        // 2. Determine Line Coordinates based on Delta
-                        // Default to Center-Center (dot) if no movement
-                        let x1 = "50%", y1 = "50%", x2 = "50%", y2 = "50%";
-
-                        if (dr === 0 && dc !== 0) { 
-                            // Horizontal (-)
-                            x1 = "0%"; y1 = "50%"; x2 = "100%"; y2 = "50%";
-                        } else if (dr !== 0 && dc === 0) { 
-                            // Vertical (|)
-                            x1 = "50%"; y1 = "0%"; x2 = "50%"; y2 = "100%";
-                        } else if ((dr === 1 && dc === 1) || (dr === -1 && dc === -1)) { 
-                            // Diagonal Main (\) (NW to SE or SE to NW)
-                            x1 = "0%"; y1 = "0%"; x2 = "100%"; y2 = "100%";
-                        } else if ((dr === 1 && dc === -1) || (dr === -1 && dc === 1)) { 
-                            // Diagonal Anti (/) (NE to SW or SW to NE)
-                            x1 = "100%"; y1 = "0%"; x2 = "0%"; y2 = "100%";
-                        }
-
-                        // 3. Set CSS Var for color (used by CSS animations)
-                        cell.style.setProperty('--laser-color', hex);
-
-                        // 4. Inject SVG Line
-                        const svg = document.createElement('div');
-                        svg.className = 'laser-beam-svg';
-                        svg.innerHTML = `<svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
-                            <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${hex}" stroke-width="15" stroke-linecap="round" />
-                        </svg>`;
-                        cell.appendChild(svg);
-
-                        // 5. Trigger Background Pulse
-                        cell.classList.remove('laser-active'); // reset if needed
-                        void cell.offsetWidth; // force reflow
-                        cell.classList.add('laser-active'); 
                     }
                     i++;
                 }, 30); // Slightly faster speed (30ms) for a snappier beam
@@ -1560,8 +1590,8 @@
         <div id="game-view" class="hidden w-full">
             <div class="mb-4 p-4 bg-gray-800/50 rounded-lg shadow-lg backdrop-blur-md border border-indigo-500/30 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-center">
                 <div class="font-sci-mono"><span class="text-xs text-gray-400 block">Game ID</span><span id="game-id-display" class="text-sm break-all">...</span></div>
-                <div class="font-sci-mono"><span class="text-xs text-gray-400 block">You Are</span><span id="player-number" class="text-lg font-bold">...</span></div>
-                <div class="font-sci-mono"><span class="text-xs text-gray-400 block">Current Turn</span><span id="current-turn" class="text-lg font-bold">...</span></div>
+                <div class="font-sci-mono"><span id="player-hud-label" class="text-xs text-gray-400 block">You Are</span><span id="player-hud-info" class="text-lg font-bold">...</span></div>
+                <div class="font-sci-mono"><span id="opponent-hud-label" class="text-xs text-gray-400 block">Opponent</span><span id="opponent-hud-info" class="text-lg font-bold">...</span></div>
                 <div class="font-sci-mono"><span class="text-xs text-gray-400 block">Phase</span><span id="current-phase" class="text-lg font-bold">...</span></div>
                 <div class="font-sci-mono"><span class="text-xs text-gray-400 block">Energy Pool</span><span id="energy-pool" class="text-lg font-bold text-cyan-400">10</span></div>
                 <div class="font-sci-mono"><span class="text-xs text-gray-400 block">Your Budget</span><span id="player-budget" class="text-lg font-bold text-green-400">$0</span></div>
