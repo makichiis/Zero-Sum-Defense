@@ -251,6 +251,12 @@
                 // Use start-of-turn location for range check
                 const [rS, cS] = p.nexusStartLoc || startLoc; 
                 const [rT, cT] = targetLoc;
+
+                const myZoneStart = (playerIndex === 0) ? 0 : 5;
+                const myZoneEnd = (playerIndex === 0) ? 5 : CONSTANTS.BOARD_COLS;
+                if (cT < myZoneStart || cT >= myZoneEnd) {
+                    return false; // Out of player's zone
+                }
                 
                 const dist = Math.abs(rS - rT) + Math.abs(cS - cT);
                 if (dist > CONSTANTS.NEXUS_RANGE) return false;
