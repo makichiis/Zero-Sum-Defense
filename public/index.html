@@ -263,8 +263,8 @@
                     return false; // Out of player's zone
                 }
                 
-                const dist = Math.abs(rS - rT) + Math.abs(cS - cT);
-                if (dist > CONSTANTS.NEXUS_RANGE) return false;
+                const pathDist = GameLogic.findShortestPath([rS, cS], [rT, cT], gameData);
+                if (pathDist > CONSTANTS.NEXUS_RANGE) return false;
 
                 const unit = GameLogic.getUnitAt(rT, cT, gameData);
                 // Can only move to empty space or own nexus (self)
@@ -272,6 +272,47 @@
                 if (unit && unit.type === 'nexus' && unit.ownerIdx !== playerIndex) return false;
                 
                 return true;
+            },
+
+            findShortestPath: (startLoc, targetLoc, gameData) => {
+                const [startR, startC] = startLoc;
+                const [targetR, targetC] = targetLoc;
+
+                let queue = [[startR, startC, 0]]; // [r, c, distance]
+                let visited = new Set();
+                visited.add(`${startR},${startC}`);
+
+                const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]]; // N, S, W, E
+
+                while (queue.length > 0) {
+                    const [r, c, dist] = queue.shift();
+
+                    if (r === targetR && c === targetC)
+                        return dist;
+
+                    if (dist >= CONSTANTS.NEXUS_RANGE)
+                        continue;
+
+                    for (const [dr, dc] of directions) {
+                        const nr = r + dr;
+                        const nc = c + dc;
+                        const key = `${nr},${nc}`;
+
+                        if (nr < 0 || nr >= CONSTANTS.BOARD_ROWS || nc < 0 || nc >= CONSTANTS.BOARD_COLS || visited.has(key))
+                            continue;
+
+                        visited.add(key);
+
+                        const unit = GameLogic.getUnitAt(nr, nc, gameData);
+                        const isTarget = (nr === targetR && nc === targetC);
+
+                        if (unit && !isTarget)
+                            continue;
+                        
+                        queue.push([nr, nc, dist + 1]);
+                    }
+                }
+                return Infinity;
             },
 
             traceLaser: (startLoc, direction, gameData) => {
