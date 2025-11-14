@@ -294,29 +294,37 @@
 
                     // STOP if hitting Back Walls (Left/Right columns)
                     if (cOut) {
-                        log.push("Laser escaped the system (Miss).");
+                        log.push({ msg: "Laser escaped the system (MISS).", audience: "public" });
                         break; 
                     }
 
                     // REFLECT if hitting Side Walls (Top/Bottom rows)
                     if (rOut) {
-                        log.push("Laser reflected off side boundary.");
-                        
-                        const [prevR, prevC] = path[path.length - 2];
-                        
-                        r = prevR;
-                        c = prevC + dy;
-                        
-                        path[path.length - 1] = [r, c]; 
+                        // Check for perpendicular (dy === 0) vs. diagonal (dy !== 0) hit
 
-                        const cOut = c < 0 || c >= CONSTANTS.BOARD_COLS;
-                        if (cOut) {
-                            log.push("Laser reflected into a corner and escaped (Miss).");
-                            break; 
+                        if (dy === 0) { // Perpendicular hit
+                            log.push({ msg: "Laser escaped the system (MISS).", audience: "public" });
+                            break; // Escape the system
+                        } else { // Diagonal hit
+                            const [prevR, prevC] = path[path.length - 2];
+                            const ownerIdx = (prevC < 5) ? 0 : 1;
+                            log.push({ msg: "Laser reflected off side boundary.", audience: `p${ownerIdx}` });
+
+
+                            r = prevR;
+                            c = prevC + dy;
+
+                            path[path.length - 1] = [r, c]; 
+
+                            const cOut = c < 0 || c >= CONSTANTS.BOARD_COLS;
+                            if (cOut) {
+                                log.push({ msg: "Laser escaped the system (MISS).", audience: "public" });
+                                break; 
+                            }
+
+                            dx = -dx; 
+                            direction = [dx, dy];
                         }
-
-                        dx = -dx; 
-                        direction = [dx, dy];
                     }
 
                     // 2. Unit Check
@@ -324,12 +332,12 @@
                     if (unit) {
                         const ownerName = simGame.players[unit.ownerIdx].displayName;
                         if (unit.type === 'nexus') {
-                            log.push(`HIT ${ownerName}'s Nexus!`);
+                            log.push({ msg: `HIT ${ownerName}'s Nexus!`, audience: "public" });
                             hits.push(unit);
                             unit.hp--;
                             break; 
                         } else if (unit.type === 'pylon') {
-                            log.push(`HIT ${ownerName}'s Pylon!`);
+                            log.push({ msg: `HIT ${ownerName}'s Pylon!`, audience: "public" });
                             hits.push(unit);
                             break;
                         } else if (unit.type === 'mirror') {
@@ -337,16 +345,16 @@
                             const incomingVecKey = `${dx},${dy}`;
                             const ruleSet = CONSTANTS.REFLECTION_MAP[orientation];
                             if (!ruleSet || !ruleSet[incomingVecKey]) {
-                                log.push(`ERROR: Mirror ${orientation} has no rule for ${incomingVecKey}!`);
+                                log.push({ msg: `ERROR: Mirror ${orientation} has no rule for ${incomingVecKey}!`, audience: "public" });
                                 break;
                             }
                             const result = ruleSet[incomingVecKey];
                             if (result === 'DESTROY') {
-                                log.push(`HIT ${ownerName}'s Mirror!`);
+                                log.push({ msg: `HIT ${ownerName}'s Mirror!`, audience: "public" });
                                 hits.push(unit);
                                 break; 
                             } else {
-                                log.push(`REFLECT off ${ownerName}'s Mirror!`);
+                                log.push({ msg: `REFLECT off ${ownerName}'s Mirror!`, audience: `p${unit.ownerIdx}` });
                                 [dx, dy] = result;
                                 direction = [dx, dy];
                                 continue;
@@ -739,7 +747,7 @@
                         hits.forEach(h => {
                             if (h.type === 'nexus') {
                                 newP[h.ownerIdx].nexusHP--;
-                                if(newP[h.ownerIdx].nexusHP <= 0) { gameOver = true; winner = State.playerIndex; }
+                                if(newP[h.ownerIdx].nexusHP <= 0) { gameOver = true; winner = (h.ownerIdx + 1) % 2; }
                             } else {
                                 newP[h.ownerIdx].buildings = newP[h.ownerIdx].buildings.filter(b => 
                                     !(b.location[0] === h.location[0] && b.location[1] === h.location[1])
@@ -1182,10 +1190,22 @@
                 
                 // Render Log
                 if(DOM.gameLog && g.log) {
-                    DOM.gameLog.innerHTML = g.log.map(l => `<div class="border-b border-gray-700 py-1">${l}</div>`).join('');
-                    DOM.gameLog.scrollTop = DOM.gameLog.scrollHeight;
-                }
+                    const myAudience = `p${State.playerIndex}`;
+                    const filteredLog = g.log.slice().reverse().map(logEntry => {
+                        if (typeof logEntry === 'string') {
+                            return `<div class="border-b border-gray-700 py-1">${logEntry}</div>`;
+                        }
 
+                        // Handle new log objects
+                        const audience = logEntry.audience;
+
+                        if (audience === 'public' || audience === myAudience) {
+                            return `<div class="border-b border-gray-700 py-1">${logEntry.msg}</div>`;
+                        }
+                        return null;
+                    }).filter(Boolean);
+                    DOM.gameLog.innerHTML = filteredLog.join('');
+                }
                 if(g.status === 'gameOver') UIManager.showModal(`Game Over! Winner: ${g.players[g.winner].displayName}`, true);
             },
             
@@ -1415,7 +1435,7 @@
                 };
 
                 let i = 0;
-                const pulseSpeed = '0.3s';
+                const pulseSpeed = '0.5s';
                 const pulseDelayStep = 0.05;
                 const interval = setInterval(() => {
                     if(i >= path.length) { 
@@ -1478,11 +1498,15 @@
 
                                 if (isWallReflect_In) {
                                     const [x_out, y_out] = getEdgeCoords(dr_in * -1, dc_in * -1);
-                                    svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" />`;
+                                    const delay = i * pulseDelayStep;
+                                    const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
+                                    svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
                                 } else if (isWallReflect_Out) {
                                     const [x_out, y_out] = getEdgeCoords(dr_out * -1, dc_out * -1);
                                     const [x_in_new, y_in_new] = getEdgeCoords(dr_out, dc_out);
-                                    svgHTML = `<line x1="${x_in_new}" y1="${y_in_new}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" />`;
+                                    const delay = i * pulseDelayStep;
+                                    const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
+                                    svgHTML = `<line x1="${x_in_new}" y1="${y_in_new}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
                                 }
                                 else if (isPassthrough) {
                                     const [x_out, y_out] = getEdgeCoords(dr_out * -1, dc_out * -1);
@@ -1981,7 +2005,7 @@
                 </div>
 
                 <div class="w-full lg:w-80 xl:w-96 flex-shrink-0 flex flex-col gap-4">
-                    <div id="control-panel" class="p-4 bg-gray-800/50 rounded-lg shadow-lg backdrop-blur-md border border-indigo-500/30">
+                    <div id="control-panel" class="min-h-96 p-4 bg-gray-800/50 rounded-lg shadow-lg backdrop-blur-md border border-indigo-500/30">
                         <h3 class="text-xl font-bold mb-4 text-center font-sci-mono text-cyan-400">CONTROLS</h3>
                         
                         <div id="setup-controls" class="hidden text-center">
