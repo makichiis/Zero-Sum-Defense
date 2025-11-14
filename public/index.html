@@ -34,6 +34,24 @@
                 'Pink':   { bg: 'bg-pink-900/20',   stroke: 'stroke-pink-400',   border: 'border-pink-400',   text: 'text-pink-400' },
                 'Cyan':   { bg: 'bg-cyan-900/20',   stroke: 'stroke-cyan-400',   border: 'border-cyan-400',   text: 'text-cyan-400' }
             },
+            VECTORS: {
+                'fromN': "1,0",
+                'fromNE': "1,-1",
+                'fromE': "0,-1",
+                'fromSE': "-1,-1",
+                'fromS': "-1,0",
+                'fromSW': "-1,1",
+                'fromW': "0,1",
+                'fromNW': "1,1",
+                'toN': [-1, 0],
+                'toNE': [-1,1],
+                'toE': [0,1],
+                'toSE': [1,1],
+                'toS': [1,0],
+                'toSW': [1,-1],
+                'toW': [0,-1],
+                'toNW': [-1,-1]
+            },
             DIRECTIONS: {
                 'N': [-1, 0], 'NE': [-1, 1], 'E': [0, 1], 'SE': [1, 1],
                 'S': [1, 0], 'SW': [1, -1], 'W': [0, -1], 'NW': [-1, -1]
@@ -41,7 +59,16 @@
             SVGS: {
                 NEXUS: `<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>`,
                 PYLON: `<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L7 22h10L12 2z"></path></svg>`,
-                MIRROR: `<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="22" x2="22" y2="2"></line></svg>`
+                MIRROR_SHAPES: {
+                    'N': `<path d="M0 18 L6 24 L18 24 L24 18 L24 15 L0 15 Z" />`,
+                    'E': `<path d="M6 0 L0 6 L0 18 L6 24 L9 24 L9 0 Z" />`,
+                    'S': `<path d="M0 6 L6 0 L18 0 L24 6 L24 9 L0 9 Z" />`,
+                    'W': `<path d="M18 0 L24 6 L24 18 L18 24 L15 24 L15 0 Z" />`,
+                    'NE': `<polygon points="0,0 0,24 24,24" />`,
+                    'SE': `<polygon points="0,0 24,0 0,24" />`,
+                    'SW': `<polygon points="0,0 24,0 24,24" />`,
+                    'NW': `<polygon points="0,24 24,24 24,0" />`
+                }
             },
             LASER_COLORS: {
                 'Red':    '#ff0000',
@@ -55,6 +82,88 @@
             },
             APP_ID: typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'
         };
+        CONSTANTS.REFLECTION_MAP = {
+            'N': {
+                [CONSTANTS.VECTORS.fromNW]: CONSTANTS.VECTORS.toNE,
+                [CONSTANTS.VECTORS.fromN]: CONSTANTS.VECTORS.toN,
+                [CONSTANTS.VECTORS.fromNE]: CONSTANTS.VECTORS.toNW,
+                [CONSTANTS.VECTORS.fromE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromSE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromS]: "DESTROY",
+                [CONSTANTS.VECTORS.fromSW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromW]: "DESTROY"
+            },
+            'NE': {
+                [CONSTANTS.VECTORS.fromN]: CONSTANTS.VECTORS.toE,
+                [CONSTANTS.VECTORS.fromNE]: CONSTANTS.VECTORS.toNE,
+                [CONSTANTS.VECTORS.fromE]: CONSTANTS.VECTORS.toN,
+                [CONSTANTS.VECTORS.fromSE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromS]: "DESTROY",
+                [CONSTANTS.VECTORS.fromSW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromNW]: "DESTROY"
+            },
+            'E': {
+                [CONSTANTS.VECTORS.fromNE]: CONSTANTS.VECTORS.toSE,
+                [CONSTANTS.VECTORS.fromE]: CONSTANTS.VECTORS.toE,
+                [CONSTANTS.VECTORS.fromSE]: CONSTANTS.VECTORS.toNE,
+                [CONSTANTS.VECTORS.fromS]: "DESTROY",
+                [CONSTANTS.VECTORS.fromSW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromNW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromN]: "DESTROY"
+            },
+            'SE': {
+                [CONSTANTS.VECTORS.fromE]: CONSTANTS.VECTORS.toS,
+                [CONSTANTS.VECTORS.fromSE]: CONSTANTS.VECTORS.toSE,
+                [CONSTANTS.VECTORS.fromS]: CONSTANTS.VECTORS.toE,
+                [CONSTANTS.VECTORS.fromSW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromNW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromN]: "DESTROY",
+                [CONSTANTS.VECTORS.fromNE]: "DESTROY",
+            },
+            'S': {
+                [CONSTANTS.VECTORS.fromSE]: CONSTANTS.VECTORS.toSW,
+                [CONSTANTS.VECTORS.fromS]: CONSTANTS.VECTORS.toS,
+                [CONSTANTS.VECTORS.fromSW]: CONSTANTS.VECTORS.toSE,
+                [CONSTANTS.VECTORS.fromW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromNW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromN]: "DESTROY",
+                [CONSTANTS.VECTORS.fromNE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromE]: "DESTROY"
+            },
+            'SW': {
+                [CONSTANTS.VECTORS.fromS]: CONSTANTS.VECTORS.toW,
+                [CONSTANTS.VECTORS.fromSW]: CONSTANTS.VECTORS.toSW,
+                [CONSTANTS.VECTORS.fromW]: CONSTANTS.VECTORS.toS,
+                [CONSTANTS.VECTORS.fromNW]: "DESTROY",
+                [CONSTANTS.VECTORS.fromN]: "DESTROY",
+                [CONSTANTS.VECTORS.fromNE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromSE]: "DESTROY"
+            },
+            'W': {
+                [CONSTANTS.VECTORS.fromSW]: CONSTANTS.VECTORS.toNW,
+                [CONSTANTS.VECTORS.fromW]: CONSTANTS.VECTORS.toW,
+                [CONSTANTS.VECTORS.fromNW]: CONSTANTS.VECTORS.toSW,
+                [CONSTANTS.VECTORS.fromN]: "DESTROY",
+                [CONSTANTS.VECTORS.fromNE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromSE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromS]: "DESTROY"
+            },
+            'NW': {
+                [CONSTANTS.VECTORS.fromW]: CONSTANTS.VECTORS.toN,
+                [CONSTANTS.VECTORS.fromNW]: CONSTANTS.VECTORS.toNW,
+                [CONSTANTS.VECTORS.fromN]: CONSTANTS.VECTORS.toW,
+                [CONSTANTS.VECTORS.fromNE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromSE]: "DESTROY",
+                [CONSTANTS.VECTORS.fromS]: "DESTROY",
+                [CONSTANTS.VECTORS.fromSW]: "DESTROY"
+            }
+        }
 
         // ==========================================
         // 2. GLOBAL STATE
@@ -70,6 +179,7 @@
             // Action State
             currentAction: null, // 'place-pylon', 'place-mirror', 'move-nexus-select', 'setup'
             selectedLocation: null, // [r, c] for nexus moves/setup
+            currentMirrorOrientation: 'N',
             
             // Subscriptions (to unsubscribe later)
             subs: {
@@ -156,7 +266,7 @@
             traceLaser: (startLoc, direction, gameData) => {
                 let [r, c] = startLoc;
                 let [dx, dy] = direction;
-                let path = [];
+                let path = [[r, c]];
                 let hits = [];
                 let log = [];
                 
@@ -201,23 +311,35 @@
                     // 2. Unit Check
                     const unit = GameLogic.getUnitAt(r, c, simGame);
                     if (unit) {
-                        hits.push(unit);
                         const ownerName = simGame.players[unit.ownerIdx].displayName;
-                        
                         if (unit.type === 'nexus') {
-                            log.push(`HIT! ${ownerName}'s Nexus damaged!`);
-                            unit.hp--; // Modifies simGame
-                            // Actually modify return state logic in API layer, this just detects
+                            log.push(`HIT ${ownerName}'s Nexus!`);
+                            hits.push(unit);
+                            unit.hp--;
                             break; 
                         } else if (unit.type === 'pylon') {
-                            log.push(`HIT! ${ownerName}'s Pylon destroyed!`);
+                            log.push(`HIT ${ownerName}'s Pylon!`);
+                            hits.push(unit);
                             break;
                         } else if (unit.type === 'mirror') {
-                            log.push(`HIT! ${ownerName}'s Mirror reflects!`);
-                            // Mirror Reflection Logic
-                            if (dx === 0) dy = -dy; else dx = -dx;
-                            direction = [dx, dy];
-                            continue;
+                            const orientation = unit.orientation || 'N';
+                            const incomingVecKey = `${dx},${dy}`;
+                            const ruleSet = CONSTANTS.REFLECTION_MAP[orientation];
+                            if (!ruleSet || !ruleSet[incomingVecKey]) {
+                                log.push(`ERROR: Mirror ${orientation} has no rule for ${incomingVecKey}!`);
+                                break;
+                            }
+                            const result = ruleSet[incomingVecKey];
+                            if (result === 'DESTROY') {
+                                log.push(`HIT ${ownerName}'s Mirror!`);
+                                hits.push(unit);
+                                break; 
+                            } else {
+                                log.push(`REFLECT off ${ownerName}'s Mirror!`);
+                                [dx, dy] = result;
+                                direction = [dx, dy];
+                                continue;
+                            }
                         }
                     }
                 }
@@ -482,6 +604,7 @@
                         lastShotVector: null,
                         lastLaserPath: null,
                         lastAttackId: null,
+                        turnBudget: 0,
                         players: resetPlayers,
                         log: [`Game Started! State Reset.`]
                     });
@@ -497,20 +620,31 @@
                     const p1 = newP[0], p2 = newP[1];
                     if(p1.nexusLocation && (newP.length === 1 || p2?.nexusLocation)) {
                         updates.phase = 'buyMove';
-                        updates.energyPool = State.game.maxEnergy; // Reset energy
+                        const newEnergyPool = State.game.maxEnergy;
+                        updates.energyPool = newEnergyPool;
+                        // Player 0 (turn 0) has 0 pylons. Budget = min(0 + 1, energyPool)
+                        updates.turnBudget = Math.min(1, newEnergyPool);
                         updates.log.push("All Nexus placed. Phase: Buy/Move");
                     }
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
                 },
-                placeBuilding: async (type, loc) => {
+                placeBuilding: async (type, loc, orientation) => {
                     const cost = (type === 'pylon' || type === 'mirror') ? 1 : 0;
                     const newP = JSON.parse(JSON.stringify(State.game.players));
-                    newP[State.playerIndex].buildings.push({ type, location: loc, hp: CONSTANTS.BUILDING_HP });
-                    
+
+                    const newBuilding = { type, location: loc, hp: CONSTANTS.BUILDING_HP };
+                    if (type === 'mirror') {
+                        newBuilding.orientation = orientation || 'N'; // Add orientation, default to 'N'
+                    }
+                    newP[State.playerIndex].buildings.push(newBuilding);
+
+                    const logMsg = (type === 'mirror') ? `Placed ${orientation} Mirror.` : `Placed ${type}.`;
+
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
                         players: newP,
                         energyPool: State.game.energyPool - cost,
-                        log: [...State.game.log, `Placed ${type}.`]
+                        turnBudget: State.game.turnBudget - cost,
+                        log: [...State.game.log, logMsg]
                     });
                 },
                 moveNexus: async (to) => {
@@ -553,6 +687,11 @@
                         const nextTurn = (State.game.turn + 1) % 2;
                         // Apply refunds
                         const nextPool = State.game.energyPool + State.game.pendingEnergyRefund;
+
+                        // Calculate next player's budget
+                        const nextPlayer = newP[nextTurn];
+                        const nextPlayerPylons = nextPlayer.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
+                        const newTurnBudget = Math.min(nextPlayerPylons + 1, nextPool);
                         
                         if(newP[nextTurn].nexusLocation) newP[nextTurn].nexusStartLoc = newP[nextTurn].nexusLocation;
 
@@ -560,14 +699,12 @@
                             players: newP,
                             log: [...State.game.log, ...log],
                             lastShotVector: [dx, dy],
-                            
-                            // CHANGE THIS LINE:
-                            lastLaserPath: JSON.stringify(path), // <--- Convert array to string to satisfy Firestore
-                            
+                            lastLaserPath: JSON.stringify(path),
                             lastAttackId: Date.now(),
                             turn: nextTurn,
                             phase: 'buyMove',
                             energyPool: nextPool,
+                            turnBudget: newTurnBudget,
                             pendingEnergyRefund: destroyedCount
                         };
                         
@@ -590,14 +727,20 @@
                     const newP = JSON.parse(JSON.stringify(State.game.players));
                     if(newP[nextTurn].nexusLocation) newP[nextTurn].nexusStartLoc = newP[nextTurn].nexusLocation;
 
+                    const newEnergyPool = State.game.energyPool + State.game.pendingEnergyRefund;
+                    const nextPlayer = newP[nextTurn];
+                    const nextPlayerPylons = nextPlayer.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
+                    const newTurnBudget = Math.min(nextPlayerPylons + 1, newEnergyPool);
+
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
                         turn: nextTurn,
                         phase: 'buyMove',
-                        energyPool: State.game.energyPool + State.game.pendingEnergyRefund,
+                        energyPool: newEnergyPool,
+                        turnBudget: newTurnBudget,
                         pendingEnergyRefund: 0,
                         lastShotVector: null,
                         lastLaserPath: null,
-                        lastAttackId: null, // Clear the ID
+                        lastAttackId: null,
                         players: newP,
                         log: [...State.game.log, "Attack Skipped."]
                     });
@@ -846,8 +989,7 @@
                 DOM.energy.textContent = g.energyPool;
                 
                 // Calc Budget
-                const myPylons = myP.buildings ? myP.buildings.filter(b => b.type === 'pylon').length : 0;
-                const budget = (g.turn === State.playerIndex && g.phase === 'buyMove') ? (1 + myPylons) : 0;
+                const budget = (g.turn === State.playerIndex && g.phase === 'buyMove') ? (g.turnBudget || 0) : 0;
                 DOM.budget.textContent = budget;
                 
                 // Render sub-components
@@ -868,27 +1010,38 @@
                 DOM.gameBoard.innerHTML = '';
                 const myZoneStart = State.playerIndex === 0 ? 0 : 5;
                 const myZoneEnd = State.playerIndex === 0 ? 5 : 10;
-                
+
                 for(let r=0; r<CONSTANTS.BOARD_ROWS; r++){
                     for(let c=0; c<CONSTANTS.BOARD_COLS; c++){
                         const cell = document.createElement('div');
                         cell.className = 'relative aspect-square border border-indigo-500/30 transition-all duration-150';
                         cell.dataset.r = r; cell.dataset.c = c;
-                        
+
                         const isMyZone = c >= myZoneStart && c < myZoneEnd;
                         if(isMyZone) cell.classList.add(CONSTANTS.COLOR_MAP[g.players[State.playerIndex].color].bg);
                         else cell.classList.add('bg-gray-800/50'); // Shroud style
-                        
+
                         const unit = GameLogic.getUnitAt(r, c, g);
                         if(unit) {
                             if(isMyZone || unit.ownerIdx === State.playerIndex) { // Simple FOW: Only see own side or own units
                                 const color = CONSTANTS.COLOR_MAP[g.players[unit.ownerIdx].color];
-                                let svg = unit.type === 'nexus' ? CONSTANTS.SVGS.NEXUS : (unit.type === 'pylon' ? CONSTANTS.SVGS.PYLON : CONSTANTS.SVGS.MIRROR);
+
+                                let svg;
+                                if (unit.type === 'nexus') {
+                                    svg = CONSTANTS.SVGS.NEXUS;
+                                } else if (unit.type === 'pylon') {
+                                    svg = CONSTANTS.SVGS.PYLON; // This was broken in your code
+                                } else if (unit.type === 'mirror') {
+                                    const orientation = unit.orientation || 'N';
+                                    const shape = CONSTANTS.SVGS.MIRROR_SHAPES[orientation];
+                                    svg = `<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg>`;
+                                }
+
                                 const maxHp = unit.type === 'nexus' ? CONSTANTS.NEXUS_HP : CONSTANTS.BUILDING_HP;
-                                cell.innerHTML = `<div class="absolute inset-0 p-1 ${color.stroke}">${svg}</div><div class="absolute bottom-0 right-0 text-[10px] bg-black/80 px-1 text-white">${unit.hp}/${maxHp}</div>`;
+                                cell.innerHTML = `<div class="absolute inset-0 p-1 ${color.stroke} ${color.bg}">${svg}</div><div class="absolute bottom-0 right-0 text-[10px] bg-black/80 px-1 text-white">${unit.hp}/${maxHp}</div>`;
                             }
                         }
-                        
+
                         // Interaction Highlights
                         if(State.currentAction === 'setup' && isMyZone && !unit) cell.classList.add('cursor-pointer', 'hover:bg-white/20');
                         if(State.currentAction === 'place-pylon' && isMyZone && !unit) cell.classList.add('cursor-pointer', 'hover:bg-cyan-500/50');
@@ -898,7 +1051,7 @@
                                 cell.classList.add('cursor-pointer', 'bg-yellow-500/30', 'animate-pulse');
                             }
                         }
-                        
+
                         cell.onclick = () => Handlers.boardClick(r, c);
                         DOM.gameBoard.appendChild(cell);
                     }
@@ -963,9 +1116,9 @@
                 DOM.$$('.laser-beam-svg').forEach(el => el.remove());
                 DOM.$$('.laser-active').forEach(el => el.classList.remove('laser-active'));
 
-                let i = 0;
+                let i = 1;
                 const interval = setInterval(() => {
-                    if(i >= path.length) { 
+                    if(i + 1 >= path.length) { 
                         clearInterval(interval); 
                         // Optional: Auto-remove beams after a delay, or let CSS fade handle it
                         setTimeout(() => {
@@ -1131,6 +1284,14 @@
                 };
                 DOM.$('#cancel-action-btn').onclick = () => { State.currentAction = null; State.selectedLocation = null; UIManager.renderBoard(); };
                 DOM.$('#end-phase-btn').onclick = API.game.endPhase;
+
+                DOM.$$('.mirror-rotate-btn').forEach(btn => {
+                    btn.onclick = () => {
+                        const orientation = btn.dataset.orientation;
+                        State.currentMirrorOrientation = orientation;
+                        DOM.$('#mirror-orientation-display').textContent = orientation;
+                    };
+                });
                 
                 DOM.$$('button[data-dir]').forEach(btn => {
                     btn.onclick = () => {
@@ -1151,7 +1312,9 @@
                     UIManager.renderControls(); // Enable button
                 }
                 if((act === 'place-pylon' || act === 'place-mirror') && isMine && !GameLogic.getUnitAt(r,c, State.game)) {
-                    API.game.placeBuilding(act.split('-')[1], [r,c]);
+                    const type = act.split('-')[1];
+                    const orientation = (type === 'mirror') ? State.currentMirrorOrientation : null;
+                    API.game.placeBuilding(type, [r,c], orientation);
                     State.currentAction = null;
                 }
                 if(act === 'move-nexus-target') {
@@ -1234,7 +1397,7 @@
 
         .laser-active {
             /* Background pulse */
-            animation: laser-pulse 1s ease-out forwards;
+            animation: laser-pulse 1s ease-out;
         }
 
         .laser-beam-svg {
@@ -1416,6 +1579,20 @@
                             <div class="grid grid-cols-2 gap-2">
                                 <button id="place-pylon-btn" class="w-full bg-cyan-700 hover:bg-cyan-600 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg">Pylon (1E)</button>
                                 <button id="place-mirror-btn" class="w-full bg-purple-700 hover:bg-purple-600 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg">Mirror (1E)</button>
+                            </div>
+                            <div id="mirror-rotation-controls" class="p-2 bg-gray-900/50 rounded-lg">
+                                <p class="text-center text-xs text-gray-400 mb-2">Mirror Orientation: <span id="mirror-orientation-display" class="font-bold text-purple-300">N</span></p>
+                                <div class="grid grid-cols-3 gap-1 w-32 mx-auto">
+                                    <button data-orientation="NW" class="mirror-rotate-btn aspect-square bg-purple-900/70 hover:bg-purple-800 rounded-lg text-xs">NW</button>
+                                    <button data-orientation="N" class="mirror-rotate-btn aspect-square bg-purple-900/70 hover:bg-purple-800 rounded-lg text-xs">N</button>
+                                    <button data-orientation="NE" class="mirror-rotate-btn aspect-square bg-purple-900/70 hover:bg-purple-800 rounded-lg text-xs">NE</button>
+                                    <button data-orientation="W" class="mirror-rotate-btn aspect-square bg-purple-900/70 hover:bg-purple-800 rounded-lg text-xs">W</button>
+                                    <div class="aspect-square"></div>
+                                    <button data-orientation="E" class="mirror-rotate-btn aspect-square bg-purple-900/70 hover:bg-purple-800 rounded-lg text-xs">E</button>
+                                    <button data-orientation="SW" class="mirror-rotate-btn aspect-square bg-purple-900/70 hover:bg-purple-800 rounded-lg text-xs">SW</button>
+                                    <button data-orientation="S" class="mirror-rotate-btn aspect-square bg-purple-900/70 hover:bg-purple-800 rounded-lg text-xs">S</button>
+                                    <button data-orientation="SE" class="mirror-rotate-btn aspect-square bg-purple-900/70 hover:bg-purple-800 rounded-lg text-xs">SE</button>
+                                </div>
                             </div>
                             <button id="move-nexus-btn" class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg">Move Nexus</button>
                             <button id="cancel-action-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold p-2 rounded-lg text-sm">Cancel Action</button>
