@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Zero-Sum Defense</title>
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Firebase SDK -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -23,16 +21,15 @@
             COST: { PYLON: 1, MIRROR: 1 },
             NEXUS_RANGE: 3,
             COLORS: ['Red', 'Yellow', 'Blue', 'Green', 'Purple', 'Orange', 'Pink', 'Cyan'],
-            // ADDED 'text' property to map for the HUD
             COLOR_MAP: {
-                'Red':    { bg: 'bg-red-900/20',    stroke: 'stroke-rose-400',   border: 'border-rose-400',   text: 'text-rose-400' },
-                'Yellow': { bg: 'bg-yellow-900/20', stroke: 'stroke-yellow-400', border: 'border-yellow-400', text: 'text-yellow-400' },
-                'Blue':   { bg: 'bg-blue-900/20',   stroke: 'stroke-blue-400',   border: 'border-blue-400',   text: 'text-blue-400' },
-                'Green':  { bg: 'bg-green-900/20',  stroke: 'stroke-green-400',  border: 'border-green-400',  text: 'text-green-400' },
-                'Purple': { bg: 'bg-purple-900/20', stroke: 'stroke-purple-400', border: 'border-purple-400', text: 'text-purple-400' },
-                'Orange': { bg: 'bg-orange-900/20', stroke: 'stroke-orange-400', border: 'border-orange-400', text: 'text-orange-400' },
-                'Pink':   { bg: 'bg-pink-900/20',   stroke: 'stroke-pink-400',   border: 'border-pink-400',   text: 'text-pink-400' },
-                'Cyan':   { bg: 'bg-cyan-900/20',   stroke: 'stroke-cyan-400',   border: 'border-cyan-400',   text: 'text-cyan-400' }
+                'Red':    { bg: 'bg-red-900/20',    stroke: 'stroke-rose-400',    border: 'border-rose-400',    text: 'text-rose-400' },
+                'Yellow': { bg: 'bg-yellow-900/20', stroke: 'stroke-yellow-400',  border: 'border-yellow-400',  text: 'text-yellow-400' },
+                'Blue':   { bg: 'bg-blue-900/20',   stroke: 'stroke-blue-400',    border: 'border-blue-400',    text: 'text-blue-400' },
+                'Green':  { bg: 'bg-green-900/20',  stroke: 'stroke-green-400',   border: 'border-green-400',   text: 'text-green-400' },
+                'Purple': { bg: 'bg-purple-900/20', stroke: 'stroke-purple-400',  border: 'border-purple-400',  text: 'text-purple-400' },
+                'Orange': { bg: 'bg-orange-900/20', stroke: 'stroke-orange-400',  border: 'border-orange-400',  text: 'text-orange-400' },
+                'Pink':   { bg: 'bg-pink-900/20',   stroke: 'stroke-pink-400',    border: 'border-pink-400',    text: 'text-pink-400' },
+                'Cyan':   { bg: 'bg-cyan-900/20',   stroke: 'stroke-cyan-400',    border: 'border-cyan-400',    text: 'text-cyan-400' }
             },
             VECTORS: {
                 'fromN': "1,0",
@@ -171,17 +168,20 @@
         const State = {
             db: null,
             auth: null,
-            currentUser: null, // { uid, profile }
+            currentUser: null,
             gameId: null,
-            game: null,       // The full game document
-            playerIndex: -1,  // 0 or 1
+            game: null,
+            playerIndex: -1,
             
-            // Action State
-            currentAction: null, // 'place-pylon', 'place-mirror', 'move-nexus-select', 'setup'
-            selectedLocation: null, // [r, c] for nexus moves/setup
+            currentAction: null,
+            selectedLocation: null,
             currentMirrorOrientation: 'N',
+
+            previewNexus: null,
+            previewNexusLocation: null,
+            previewBuildings: [],
+            previewCost: 0,
             
-            // Subscriptions (to unsubscribe later)
             subs: {
                 game: null,
                 online: null,
@@ -209,9 +209,13 @@
             
             // Inputs & Dynamic Areas
             lobbyListContainer: document.querySelector('#lobby-list-container'),
-            onlineList: document.querySelector('#online-players-list'),
+            onlineLists: document.querySelectorAll('.online-players-list'),
             gameBoard: document.querySelector('#game-board'),
             gameLog: document.querySelector('#game-log'),
+
+            // Lobby View (for name editing)
+            lobbyNameDisplay: document.querySelector('#lobby-user-name-display'),
+            lobbyNameEdit: document.querySelector('#lobby-user-name-edit'),
             
             // Text Displays
             userId: document.querySelector('#user-id-display'),
@@ -378,8 +382,7 @@
                         State.currentUser = { uid: user.uid };
                         DOM.userId.textContent = user.uid;
                         await API.loadProfile();
-                        API.presence.start();
-                        API.presence.listenInvites();
+                        // Presence starts when user clicks "multiplayer", not on auth
                     } else {
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             signInWithCustomToken(State.auth, __initial_auth_token);
@@ -397,6 +400,7 @@
                     if (snap.exists()) {
                         State.currentUser.profile = snap.data();
                         DOM.userName.textContent = State.currentUser.profile.displayName;
+                        DOM.$('#lobby-name-input').value = State.currentUser.profile.displayName;
                         UIManager.show('lobby');
                     } else {
                         UIManager.populateColors(DOM.$('#profile-color-select'));
@@ -408,15 +412,25 @@
             saveProfile: async (name, color) => {
                 const ref = doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'users', State.currentUser.uid, 'profile', 'settings');
                 await setDoc(ref, { displayName: name, preferredColor: color });
-                await API.loadProfile();
+                await API.loadProfile(); // Reload profile to update State and UI
+                // The presence heartbeat (hb) will automatically pick up the new name
             },
 
             presence: {
                 start: () => {
+                    // Only start if not already started
+                    if (State.subs.online) return; 
+                    
                     const hb = () => {
                         if(!State.currentUser?.profile) return;
                         const ref = doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'online_users', State.currentUser.uid);
-                        setDoc(ref, { displayName: State.currentUser.profile.displayName, lastSeen: Date.now() }, { merge: true });
+                        // Read current status from State, default to 'Available'
+                        const currentStatus = State.currentUser.status || 'Available';
+                        setDoc(ref, { 
+                            displayName: State.currentUser.profile.displayName, 
+                            lastSeen: Date.now(),
+                            status: currentStatus // Ensure status is part of the heartbeat
+                        }, { merge: true });
                     };
                     hb(); setInterval(hb, 30000);
 
@@ -424,13 +438,17 @@
                     State.subs.online = onSnapshot(onlineRef, (snap) => {
                         UIManager.renderOnlineList(snap);
                     });
+
+                    API.presence.listenInvites();
                 },
                 setStatus: (status) => {
                     if(!State.currentUser) return;
+                    State.currentUser.status = status; // Store status locally
                     const ref = doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'online_users', State.currentUser.uid);
                     setDoc(ref, { status: status }, { merge: true });
                 },
                 listenInvites: () => {
+                    if (State.subs.invites) return; // Don't listen twice
                     const q = query(collection(State.db, 'artifacts', CONSTANTS.APP_ID, 'invites'), where("toUid", "==", State.currentUser.uid));
                     State.subs.invites = onSnapshot(q, (snap) => {
                         snap.docChanges().forEach(change => {
@@ -439,15 +457,32 @@
                             }
                         });
                     });
+                },
+                // NEW: Function to send an invite
+                sendInvite: async (toUid, toName, gameId) => {
+                    if (!State.game) {
+                        UIManager.toast("Error: Game state not found.");
+                        return;
+                    }
+                    const ref = collection(State.db, 'artifacts', CONSTANTS.APP_ID, 'invites');
+                    await addDoc(ref, {
+                        toUid: toUid,
+                        fromUid: State.currentUser.uid,
+                        fromName: State.currentUser.profile.displayName,
+                        gameId: gameId,
+                        lobbyName: State.game.lobbyName, // Pass lobby name
+                        timestamp: Date.now()
+                    });
+                    UIManager.toast(`Invite sent to ${toName}!`);
                 }
             },
 
             lobby: {
+                // MODIFIED: To return the new game ID
                 create: async (name, energy, color) => {
                     const coll = collection(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games');
                     // Purge old
                     const q = query(coll, where("players", "array-contains", { userId: State.currentUser.uid })); // Simplified purge query
-                    // (Actual purge logic simplified for brevity, keeping robust create logic)
                     
                     const gameData = {
                         lobbyName: name,
@@ -472,6 +507,7 @@
                     };
                     const ref = await addDoc(coll, gameData);
                     API.game.listen(ref.id);
+                    return ref.id; // Return the new ID
                 },
                 join: async (gameId) => {
                     const ref = doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', gameId);
@@ -481,6 +517,12 @@
                     
                     if(data.players[0].userId === State.currentUser.uid) {
                         API.game.listen(gameId); // Re-join own game
+                        return;
+                    }
+
+                    // Don't join if full
+                    if (data.players.length >= 2) {
+                        UIManager.toast("Lobby is full.");
                         return;
                     }
                     
@@ -509,7 +551,7 @@
                     if(!State.gameId) return;
                     const ref = doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId);
                     
-                    if(State.game.players.length <= 1) {
+                    if(State.game.status === 'gameOver' || State.game.players.length <= 1) {
                         await deleteDoc(ref);
                     } else {
                         // Remove self
@@ -528,51 +570,54 @@
                     DOM.gameId.textContent = id;
                     
                     State.subs.game = onSnapshot(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', id), (snap) => {
-                        // 1. Handle Lobby Deletion (Host left or Game deleted)
                         if(!snap.exists()) { 
                             API.game.stopListening(); 
                             UIManager.showModal("Lobby Closed", false); 
-                            UIManager.show('lobbyList'); // Ensure we go back to list
+                            UIManager.show('lobbyList');
                             return; 
                         }
                         
                         const newData = snap.data();
 
-                        // --- KICK DETECTION & HANDLING ---
-                        // Check if we are still in the players list
                         const amIStillInGame = newData.players.some(p => p.userId === State.currentUser.uid);
                         
-                        // If the document exists, but we aren't in it, we were kicked.
                         if (!amIStillInGame) {
-                            API.game.stopListening(); // Clean up local listeners/presence
+                            API.game.stopListening();
                             UIManager.toast("You have been kicked by the host.");
-                            UIManager.show('lobbyList'); // Send back to menu
-                            return; // Stop processing this update
+                            UIManager.show('lobbyList');
+                            return;
                         }
-                        // ----------------------------------
+
+                        // === Local function to update state and render ===
+                        const updateAndRender = (dataToRender) => {
+                            State.game = dataToRender; // Use the passed-in data
+                            State.playerIndex = State.game.players.findIndex(p => p.userId === State.currentUser.uid);
+
+                            if(State.game.status === 'inProgress' || State.game.status === 'gameOver') {
+                                UIManager.show('game');
+                                UIManager.renderGame();
+                            } else {
+                                UIManager.show('waitingRoom');
+                                UIManager.renderWaitingRoom();
+                            }
+                        };
 
                         // === NEW ANIMATION TRIGGER ===
-                        if (newData.lastLaserPath && newData.lastAttackId && 
-                        (newData.lastAttackId !== State.game?.lastAttackId)) {
-                            
+                        const needsAnimation = newData.lastLaserPath && newData.lastAttackId && 
+                                               (newData.lastAttackId !== State.game?.lastAttackId);
+
+                        if (needsAnimation) {
                             const pathArray = JSON.parse(newData.lastLaserPath);
                             const shooterIndex = (newData.turn + 1) % 2;
-                            // Safe check in case a player left mid-shot calculation (rare edge case)
                             const shooterColor = newData.players[shooterIndex] ? newData.players[shooterIndex].color : 'Red';
 
-                            UIManager.animateLaser(pathArray, shooterColor);
-                        }
-                        // =============================
-
-                        State.game = newData;
-                        State.playerIndex = State.game.players.findIndex(p => p.userId === State.currentUser.uid);
-                        
-                        if(State.game.status === 'inProgress' || State.game.status === 'gameOver') {
-                            UIManager.show('game');
-                            UIManager.renderGame();
+                            // Play animation *first*, using the OLD state.
+                            // Then, in the callback, update the state and render.
+                            UIManager.animateLaser(pathArray, shooterColor, () => updateAndRender(newData));
                         } else {
-                            UIManager.show('waitingRoom');
-                            UIManager.renderWaitingRoom();
+                            // =============================
+                            // No animation, just update immediately
+                            updateAndRender(newData);
                         }
                     });
                 },
@@ -636,25 +681,37 @@
                     }
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
                 },
-                placeBuilding: async (type, loc, orientation) => {
-                    const cost = (type === 'pylon' || type === 'mirror') ? 1 : 0;
-                    const newP = JSON.parse(JSON.stringify(State.game.players));
+                confirmBuyMovePhase: async (buildingsToPlace, nexusMoveLocation) => {
+                const newP = JSON.parse(JSON.stringify(State.game.players));
+                const myP = newP[State.playerIndex];
 
-                    const newBuilding = { type, location: loc, hp: CONSTANTS.BUILDING_HP };
-                    if (type === 'mirror') {
-                        newBuilding.orientation = orientation || 'N'; // Add orientation, default to 'N'
+                let totalCost = 0;
+                let newLogs = [...State.game.log];
+                if (nexusMoveLocation) {
+                    myP.nexusLocation = nexusMoveLocation;
+                    newLogs.push(`Nexus moved.`);
+                }
+
+                buildingsToPlace.forEach(b => {
+                    const newBuilding = { type: b.type, location: b.location, hp: CONSTANTS.BUILDING_HP };
+                    if (b.type === 'mirror') {
+                        newBuilding.orientation = b.orientation || 'N';
+                        newLogs.push(`Placed ${newBuilding.orientation} Mirror.`);
+                    } else {
+                        newLogs.push(`Placed ${b.type}.`);
                     }
-                    newP[State.playerIndex].buildings.push(newBuilding);
+                    myP.buildings.push(newBuilding);
+                    totalCost += 1; // Assuming all cost 1
+                });
 
-                    const logMsg = (type === 'mirror') ? `Placed ${orientation} Mirror.` : `Placed ${type}.`;
-
-                    await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                        players: newP,
-                        energyPool: State.game.energyPool - cost,
-                        turnBudget: State.game.turnBudget - cost,
-                        log: [...State.game.log, logMsg]
-                    });
-                },
+                await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+                    players: newP,
+                    energyPool: State.game.energyPool - totalCost,
+                    turnBudget: State.game.turnBudget - totalCost,
+                    phase: 'attack',
+                    log: [...newLogs, "Attack Phase."]
+                });
+            },
                 moveNexus: async (to) => {
                     const newP = JSON.parse(JSON.stringify(State.game.players));
                     newP[State.playerIndex].nexusLocation = to;
@@ -724,7 +781,6 @@
 
                         await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
                         
-                        // Removed local animation call here, handled by listener now
                     } catch (err) {
                         console.error("Attack Error:", err);
                         UIManager.toast("Error attacking: " + err.message);
@@ -751,6 +807,56 @@
                         lastAttackId: null,
                         players: newP,
                         log: [...State.game.log, "Attack Skipped."]
+                    });
+                },
+
+                commitAndEndTurn: async (buildingsToPlace, nexusMoveLocation) => {
+                    const newP = JSON.parse(JSON.stringify(State.game.players));
+                    const myP = newP[State.playerIndex];
+                    let newLogs = [...State.game.log];
+                    let totalCost = 0;
+
+                    // 1. Apply Previews
+                    if (nexusMoveLocation) {
+                        myP.nexusLocation = nexusMoveLocation;
+                        newLogs.push(`Nexus moved.`);
+                    }
+                    buildingsToPlace.forEach(b => {
+                        const newBuilding = { type: b.type, location: b.location, hp: CONSTANTS.BUILDING_HP };
+                        if (b.type === 'mirror') {
+                            newBuilding.orientation = b.orientation || 'N';
+                            newLogs.push(`Placed ${newBuilding.orientation} Mirror.`);
+                        } else {
+                            newLogs.push(`Placed ${b.type}.`);
+                        }
+                        myP.buildings.push(newBuilding);
+                        totalCost += 1;
+                    });
+                    if (buildingsToPlace.length > 0) {
+                        newLogs.push(`Buildings placed. Total cost: ${totalCost}`);
+                    }
+                    newLogs.push(`${myP.displayName} skipped the attack phase.`);
+
+                    // 2. End Turn Logic (from skipAttack)
+                    const nextTurn = (State.game.turn + 1) % 2;
+                    if(newP[nextTurn].nexusLocation) newP[nextTurn].nexusStartLoc = newP[nextTurn].nexusLocation;
+
+                    const newEnergyPool = (State.game.energyPool - totalCost) + State.game.pendingEnergyRefund;
+                    const nextPlayer = newP[nextTurn];
+                    const nextPlayerPylons = nextPlayer.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
+                    const newTurnBudget = Math.min(nextPlayerPylons + 1, newEnergyPool);
+
+                    await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+                        turn: nextTurn,
+                        phase: 'buyMove',
+                        energyPool: newEnergyPool,
+                        turnBudget: newTurnBudget,
+                        pendingEnergyRefund: 0, 
+                        lastShotVector: null,
+                        lastLaserPath: null,
+                        lastAttackId: null,
+                        players: newP,
+                        log: newLogs
                     });
                 },
 
@@ -798,10 +904,20 @@
             show: (viewName) => {
                 Object.values(DOM.views).forEach(v => v.classList.add('hidden'));
                 if(DOM.views[viewName]) DOM.views[viewName].classList.remove('hidden');
+                
+                // Update presence status based on view
                 if(viewName === 'lobbyList') API.presence.setStatus('Available');
                 else if (viewName === 'game' || viewName === 'waitingRoom') API.presence.setStatus('Busy');
+                // Note: 'lobby' (main menu) does not set a status
             },
             toast: (msg) => {
+                const el = document.createElement('div');
+                el.className = 'absolute top-5 right-5 bg-indigo-600 text-white p-3 rounded shadow-lg z-50';
+                el.textContent = msg;
+                document.body.appendChild(el);
+                setTimeout(() => el.remove(), 3000);
+            },
+            showError: (msg) => {
                 const el = document.createElement('div');
                 el.className = 'absolute top-5 right-5 bg-red-600 text-white p-3 rounded shadow-lg z-50';
                 el.textContent = msg;
@@ -810,6 +926,9 @@
             },
             showModal: (msg, isEndGame) => {
                 DOM.modalMsg.innerHTML = `<p>${msg}</p>`;
+                // Clear old dynamic buttons
+                DOM.$$('.modal-dynamic-btn').forEach(btn => btn.remove());
+                
                 DOM.$('#new-game-btn').classList.toggle('hidden', !isEndGame);
                 DOM.views.modal.classList.remove('hidden');
             },
@@ -822,29 +941,68 @@
                 });
             },
             renderOnlineList: (snap) => {
-                DOM.onlineList.innerHTML = '';
+                DOM.onlineLists.forEach(list => list.innerHTML = '');
                 snap.forEach(doc => {
                     const d = doc.data();
                     if (Date.now() - d.lastSeen > 120000 || doc.id === State.currentUser.uid) return;
+                    
+                    const isBusy = d.status === 'Busy';
+                    const statusText = isBusy ? "In Game" : "Available";
+                    const statusColor = isBusy ? "text-red-400" : "text-green-400";
+
                     const el = document.createElement('div');
-                    el.className = 'flex justify-between p-2 bg-gray-800 rounded mb-1';
-                    el.innerHTML = `<span>${d.displayName}</span><span class="text-xs text-gray-400">${d.status || 'Online'}</span>`;
-                    // Add invite button if available logic here...
-                    DOM.onlineList.appendChild(el);
+                    el.className = 'flex justify-between items-center p-2 bg-gray-800 rounded mb-1';
+                    el.innerHTML = `
+                        <div>
+                            <span>${d.displayName}</span>
+                            <span class="ml-2 text-xs ${statusColor}">(${statusText})</span>
+                        </div>
+                        <button 
+                            data-uid="${doc.id}" 
+                            data-name="${d.displayName}"
+                            class="invite-btn bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-600 disabled:opacity-50 text-white text-xs px-2 py-1 rounded"
+                            ${isBusy ? 'disabled' : ''}
+                        >
+                            Invite
+                        </button>
+                    `;
+                    DOM.onlineLists.forEach(list => list.appendChild(el.cloneNode(true)));
                 });
             },
+            // MODIFIED: To show more invite info
             showInvite: (data, id) => {
-                DOM.modalMsg.innerHTML = `Invite from ${data.fromName}!`;
-                // Add Accept/Decline buttons dynamically via DOM for security/simplicity
-                const btn = document.createElement('button');
-                btn.className = "bg-green-500 text-white p-2 rounded mt-2";
-                btn.textContent = "Accept";
-                btn.onclick = () => { 
+                DOM.modalMsg.innerHTML = `
+                    <p class="text-2xl mb-2">Game Invite!</p>
+                    <p class="text-lg mb-1">From: <span class="font-bold text-cyan-400">${data.fromName}</span></p>
+                    <p class="text-sm mb-4">Lobby: <span class="font-bold text-gray-300">${data.lobbyName}</span></p>
+                `;
+                
+                // Add Accept/Decline buttons
+                const btnContainer = document.createElement('div');
+                btnContainer.className = "flex gap-4 justify-center mt-6 modal-dynamic-btn";
+
+                const acceptBtn = document.createElement('button');
+                acceptBtn.className = "bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-6 rounded-lg";
+                acceptBtn.textContent = "Accept";
+                acceptBtn.onclick = () => { 
                     deleteDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'invites', id));
                     API.lobby.join(data.gameId);
                     DOM.views.modal.classList.add('hidden');
                 };
-                DOM.modalMsg.appendChild(btn);
+
+                const declineBtn = document.createElement('button');
+                declineBtn.className = "bg-red-800 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg";
+                declineBtn.textContent = "Decline";
+                declineBtn.onclick = () => { 
+                    deleteDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'invites', id));
+                    DOM.views.modal.classList.add('hidden');
+                };
+                
+                btnContainer.appendChild(declineBtn);
+                btnContainer.appendChild(acceptBtn);
+                DOM.modalMsg.appendChild(btnContainer);
+
+                DOM.$('#new-game-btn').classList.add('hidden'); // Hide default button
                 DOM.views.modal.classList.remove('hidden');
             },
             
@@ -884,7 +1042,6 @@
                     energySelect.disabled = true;
                 }
 
-                // This text display is now redundant, but we'll update it anyway
                 DOM.$('#waiting-lobby-name').textContent = g.lobbyName;
 
                 // Helper to render player box
@@ -893,10 +1050,8 @@
                     const rInd = DOM.$(`#${prefix}-ready-indicator`);
                     const sel = DOM.$(`#${prefix}-color-select`);
                     
-                    // Find kick button (only used for p2)
                     const kickBtn = DOM.$('#kick-p2-btn');
                     
-                    // Hiding the old small buttons, we use the big main button now
                     DOM.$(`#${prefix}-ready-btn`).classList.add('hidden');
 
                     if(!p) {
@@ -911,7 +1066,6 @@
                     nameEl.textContent = p.displayName + (isMe ? " (You)" : "");
                     nameEl.classList.remove('text-gray-500');
                     
-                    // Host is always "Ready" implicitly, so we only care about Guest readiness visually
                     if (prefix === 'p1') {
                         rInd.textContent = "HOST";
                         rInd.className = "mt-2 text-xs font-bold text-cyan-500 uppercase tracking-widest";
@@ -937,7 +1091,6 @@
                         sel.onchange = async (e) => {
                             const newP = [...State.game.players];
                             newP[State.playerIndex].color = e.target.value;
-                            // Changing color shouldn't un-ready anyone, so just update players
                             await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), { players: newP });
                         };
                     }
@@ -956,7 +1109,6 @@
                     mainBtn.disabled = !p2Ready;
                     mainBtn.onclick = API.game.startGame;
                     
-                    // Styling: Green if ready, Gray if not
                     mainBtn.className = `w-full font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg mb-3 ${p2Ready ? 'bg-green-600 hover:bg-green-500 text-white cursor-pointer' : 'bg-gray-700 text-gray-400 cursor-not-allowed opacity-75'}`;
                 } else if (State.playerIndex === 1) { // Check if guest
                     // Guest Logic: Toggle Ready
@@ -965,22 +1117,26 @@
                     mainBtn.disabled = false;
                     mainBtn.onclick = API.game.toggleReady;
 
-                    // Styling: Yellow if ready (to cancel), Green if not ready
                     mainBtn.className = `w-full font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg mb-3 cursor-pointer ${amIReady ? 'bg-yellow-600 hover:bg-yellow-500 text-white' : 'bg-green-600 hover:bg-green-500 text-white'}`;
                 } else {
-                    // Spectator/Error state?
                     mainBtn.classList.add('hidden');
                 }
             },
             
             renderGame: () => {
+                if (State.game.phase !== 'buyMove' || State.game.turn !== State.playerIndex) {
+                    State.previewBuildings = [];
+                    State.previewCost = 0;
+                    State.previewNexusLocation = null;
+                    State.currentAction = null;
+                }
+
                 const g = State.game;
                 const myP = g.players[State.playerIndex];
                 if(!myP) return; 
                 
                 const turnP = g.players[g.turn];
                 
-                // SAFE COLOR LOOKUP: Defaults to 'text-white' if color map fails
                 const getTextColor = (colorName) => {
                     const c = CONSTANTS.COLOR_MAP[colorName];
                     return (c && c.text) ? c.text : 'text-white';
@@ -1018,11 +1174,12 @@
                 
                 // Calc Budget
                 const budget = (g.turn === State.playerIndex && g.phase === 'buyMove') ? (g.turnBudget || 0) : 0;
-                DOM.budget.textContent = budget;
+                const availableBudget = budget - State.previewCost;
+                DOM.budget.textContent = availableBudget;
                 
                 // Render sub-components
-                UIManager.renderBoard();
-                UIManager.renderControls(budget);
+                UIManager.renderBoard(); // Will use preview state
+                UIManager.renderControls(availableBudget);
                 
                 // Render Log
                 if(DOM.gameLog && g.log) {
@@ -1049,36 +1206,81 @@
                         if(isMyZone) cell.classList.add(CONSTANTS.COLOR_MAP[g.players[State.playerIndex].color].bg);
                         else cell.classList.add('bg-gray-800/50'); // Shroud style
 
-                        const unit = GameLogic.getUnitAt(r, c, g);
-                        if(unit) {
-                            if(isMyZone || unit.ownerIdx === State.playerIndex) { // Simple FOW: Only see own side or own units
-                                const color = CONSTANTS.COLOR_MAP[g.players[unit.ownerIdx].color];
+                        // --- New Render Logic (Handles Previews) ---
+
+                        let unit = GameLogic.getUnitAt(r, c, g);
+                        let unitToRender = unit;
+                        let isPreview = false;
+                        const previewBuilding = State.previewBuildings.find(b => b.location[0] === r && b.location[1] === c);
+
+                        // Check if we're rendering my nexus AND there's a preview move
+                        if (unit && unit.type === 'nexus' && unit.ownerIdx === State.playerIndex && State.previewNexusLocation) {
+                            // This is the nexus at its *original* spot, but we have a preview move. Hide it.
+                            unitToRender = null; 
+                        }
+
+                        // 1. Check for preview buildings if cell is empty
+                        if (!unit) {
+                            if (previewBuilding) {
+                                unitToRender = { ...previewBuilding, ownerIdx: State.playerIndex, hp: 1 }; // Mock unit
+                                isPreview = true;
+                            }
+                        }
+
+                        // 2a. Check for preview nexus move in BUYMOVE phase
+                        if (!unit && !previewBuilding && State.game.phase === 'buyMove') {
+                             if (State.previewNexusLocation && State.previewNexusLocation[0] === r && State.previewNexusLocation[1] === c) {
+                                 unitToRender = { type: 'nexus', ownerIdx: State.playerIndex, hp: CONSTANTS.NEXUS_HP };
+                                 isPreview = true;
+                             }
+                        }
+
+                        // 2b. Check for preview nexus in SETUP phase
+                        if (!unit && !unitToRender && State.currentAction === 'setup') {
+                            if (State.previewNexus && State.previewNexus[0] === r && State.previewNexus[1] === c) {
+                                unitToRender = { type: 'nexus', ownerIdx: State.playerIndex, hp: CONSTANTS.NEXUS_HP };
+                                isPreview = true;
+                            }
+                        }
+
+                        // 3. Render the unit (real or preview)
+                        if(unitToRender) {
+                            if(isMyZone || unitToRender.ownerIdx === State.playerIndex) { // Simple FOW
+                                const color = CONSTANTS.COLOR_MAP[g.players[unitToRender.ownerIdx].color];
 
                                 let svg;
-                                if (unit.type === 'nexus') {
+                                if (unitToRender.type === 'nexus') {
                                     svg = CONSTANTS.SVGS.NEXUS;
-                                } else if (unit.type === 'pylon') {
-                                    svg = CONSTANTS.SVGS.PYLON; // This was broken in your code
-                                } else if (unit.type === 'mirror') {
-                                    const orientation = unit.orientation || 'N';
+                                } else if (unitToRender.type === 'pylon') {
+                                    svg = CONSTANTS.SVGS.PYLON;
+                                } else if (unitToRender.type === 'mirror') {
+                                    const orientation = unitToRender.orientation || 'N';
                                     const shape = CONSTANTS.SVGS.MIRROR_SHAPES[orientation];
                                     svg = `<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg>`;
                                 }
 
-                                const maxHp = unit.type === 'nexus' ? CONSTANTS.NEXUS_HP : CONSTANTS.BUILDING_HP;
-                                cell.innerHTML = `<div class="absolute inset-0 p-1 ${color.stroke} ${color.bg}">${svg}</div><div class="absolute bottom-0 right-0 text-[10px] bg-black/80 px-1 text-white">${unit.hp}/${maxHp}</div>`;
+                                const maxHp = unitToRender.type === 'nexus' ? CONSTANTS.NEXUS_HP : CONSTANTS.BUILDING_HP;
+                                // Add "PREVIEW" text and opacity for previewed units
+                                const hpDisplay = (isPreview) ? `<div class="absolute bottom-0 right-0 text-[10px] bg-black/80 px-1 text-blue-300">PREVIEW</div>` : `<div class="absolute bottom-0 right-0 text-[10px] bg-black/80 px-1 text-white">${unitToRender.hp}/${maxHp}</div>`;
+                                const previewClass = (isPreview) ? 'opacity-75' : '';
+                                
+                                cell.innerHTML = `<div class="absolute inset-0 p-1 ${color.stroke} ${color.bg} ${previewClass}">${svg}</div>${hpDisplay}`;
                             }
                         }
 
-                        // Interaction Highlights
+                        // 4. Interaction Highlights
                         if(State.currentAction === 'setup' && isMyZone && !unit) cell.classList.add('cursor-pointer', 'hover:bg-white/20');
-                        if(State.currentAction === 'place-pylon' && isMyZone && !unit) cell.classList.add('cursor-pointer', 'hover:bg-cyan-500/50');
-                        if(State.currentAction === 'place-mirror' && isMyZone && !unit) cell.classList.add('cursor-pointer', 'hover:bg-purple-500/50');
-                        if(State.currentAction === 'move-nexus-target' && !unit) {
-                            if(GameLogic.isValidNexusMove(State.selectedLocation, [r,c], State.playerIndex, g)) {
+                        // Check for !unitToRender to prevent highlighting occupied preview cells
+                        if(State.currentAction === 'place-pylon' && isMyZone && !unit && !unitToRender) cell.classList.add('cursor-pointer', 'hover:bg-cyan-500/50');
+                        if(State.currentAction === 'place-mirror' && isMyZone && !unit && !unitToRender) cell.classList.add('cursor-pointer', 'hover:bg-purple-500/50');
+                        if(State.currentAction === 'move-nexus-target') {
+                            // Check against real units, not preview buildings
+                            const isBlocked = GameLogic.getUnitAt(r, c, g); 
+                            if(!isBlocked && GameLogic.isValidNexusMove(State.selectedLocation, [r,c], State.playerIndex, g)) {
                                 cell.classList.add('cursor-pointer', 'bg-yellow-500/30', 'animate-pulse');
                             }
                         }
+                        // --- End New Render Logic ---
 
                         cell.onclick = () => Handlers.boardClick(r, c);
                         DOM.gameBoard.appendChild(cell);
@@ -1086,7 +1288,7 @@
                 }
             },
 
-            renderControls: (budget) => {
+            renderControls: (availableBudget) => {
                 const g = State.game;
                 const isMyTurn = g.turn === State.playerIndex;
                 const controls = { 
@@ -1096,26 +1298,26 @@
                     waiting: DOM.$('#waiting-controls') 
                 };
                 
-                // 1. Reset: Hide all control panels
                 Object.values(controls).forEach(el => {
                     if(el) el.classList.add('hidden');
                 });
 
-                // 2. Safely hide the old waiting message if it still exists in DOM
                 const oldMsg = DOM.$('#setup-waiting-msg');
                 if (oldMsg) oldMsg.classList.add('hidden');
 
-                // 3. Show relevant controls
                 if(g.phase === 'setup') {
                     if(!g.players[State.playerIndex].nexusLocation) {
                         if(controls.setup) controls.setup.classList.remove('hidden');
-                        State.currentAction = 'setup';
+                        // Req #1: Nexus Placement requires confirmation
+                        State.currentAction = 'setup'; 
                         
                         const btn = DOM.$('#confirm-nexus-btn');
                         if(btn) {
-                            btn.disabled = !State.selectedLocation;
-                            btn.textContent = State.selectedLocation ? "Confirm Location" : "Select Cell";
-                            btn.onclick = () => API.game.placeNexus(State.selectedLocation);
+                            // Enable button as soon as a preview is set
+                            btn.disabled = !State.previewNexus; 
+                            btn.textContent = State.previewNexus ? "Confirm Location" : "Select Cell";
+                            // The handler will now use State.previewNexus
+                            btn.onclick = () => API.game.placeNexus(State.previewNexus); 
                         }
                     } else {
                         if(controls.waiting) controls.waiting.classList.remove('hidden');
@@ -1126,123 +1328,190 @@
                 }
                 else if (g.phase === 'buyMove') {
                     if(controls.buy) controls.buy.classList.remove('hidden');
+                    
                     const btnPylon = DOM.$('#place-pylon-btn');
                     const btnMirror = DOM.$('#place-mirror-btn');
-                    if(btnPylon) btnPylon.disabled = (budget < 1 || g.energyPool < 1);
-                    if(btnMirror) btnMirror.disabled = (budget < 1 || g.energyPool < 1);
+                    const btnMoveNexus = DOM.$('#move-nexus-btn');
+                    if (State.currentAction === 'move-nexus-target') {
+                        btnMoveNexus.textContent = "Done";
+                        btnMoveNexus.classList.add('bg-yellow-500');
+                        btnMoveNexus.classList.remove('bg-yellow-600', 'hover:bg-yellow-500');
+                    } else {
+                        btnMoveNexus.textContent = "Move Nexus";
+                        btnMoveNexus.classList.remove('bg-yellow-500');
+                        btnMoveNexus.classList.add('bg-yellow-600', 'hover:bg-yellow-500');
+                    }
+                    const btnUndo = DOM.$('#undo-action-btn'); // New ID
+                    const mirrorControls = DOM.$('#mirror-rotation-controls');
+                    const separator = DOM.$('#buy-move-separator');
+                    
+                    // Req #3: Show/Hide Mirror Controls
+                    if (State.currentAction === 'place-mirror') {
+                        mirrorControls.classList.remove('hidden');
+                    } else {
+                        mirrorControls.classList.add('hidden');
+                    }
                 }
                 else if (g.phase === 'attack') {
                     if(controls.attack) controls.attack.classList.remove('hidden');
+
+                    let disabledDir = null;
+                    const myNexusLoc = State.game.players[State.playerIndex]?.nexusLocation;
+                    const lastPathStr = State.game.lastLaserPath;
+
+                    if (myNexusLoc && lastPathStr) {
+                        try {
+                            const path = JSON.parse(lastPathStr);
+                            const myR = myNexusLoc[0];
+                            const myC = myNexusLoc[1];
+
+                            const nexusIndexInPath = path.findIndex(loc => loc[0] === myR && loc[1] === myC);
+                            if (nexusIndexInPath > 0) {
+                                const prevCell = path[nexusIndexInPath - 1];
+                                const incomingVec = [myR - prevCell[0], myC - prevCell[1]];
+                                const returnVec = [incomingVec[0] * -1, incomingVec[1] * -1];
+                                disabledDir = Object.keys(CONSTANTS.DIRECTIONS).find(key => {
+                                    const dirVec = CONSTANTS.DIRECTIONS[key];
+                                    return dirVec[0] === returnVec[0] && dirVec[1] === returnVec[1];
+                                });
+                            }
+                        } catch (e) {
+                            console.error("Failed to parse lastLaserPath", 0);
+                        }
+
+                    DOM.$$('button[data-dir]').forEach(btn => {
+                            if (btn.dataset.dir === disabledDir) {
+                                btn.disabled = true;
+                                btn.classList.add('opacity-30', 'bg-gray-700', 'cursor-not-allowed');
+                                btn.classList.remove('bg-red-800', 'hover:bg-red-700');
+                            } else {
+                                btn.disabled = false;
+                                btn.classList.remove('opacity-30', 'bg-gray-700', 'cursor-not-allowed');
+                                btn.classList.add('bg-red-800', 'hover:bg-red-700');
+                            }
+                        });
+                    }
                 }
             },
             
-            animateLaser: (path, colorName) => {
-                // Get Hex from constants, default to Red
+            animateLaser: (path, colorName, onCompleteCallback) => {
                 const hex = CONSTANTS.LASER_COLORS[colorName] || '#ff0000';
 
-                // Clean up any old laser beams immediately before starting a new one
                 DOM.$$('.laser-beam-svg').forEach(el => el.remove());
                 DOM.$$('.laser-active').forEach(el => el.classList.remove('laser-active'));
 
                 const myZoneStart = State.playerIndex === 0 ? 0 : 5;
                 const myZoneEnd = State.playerIndex === 0 ? 5 : CONSTANTS.BOARD_COLS;
 
-                let i = 1;
+                const getEdgeCoords = (dr, dc) => {
+                    if (dr === 0 && dc === 1) return ["0%", "50%"]; // from W
+                    if (dr === 0 && dc === -1) return ["100%", "50%"]; // from E
+                    if (dr === 1 && dc === 0) return ["50%", "0%"]; // from N
+                    if (dr === -1 && dc === 0) return ["50%", "100%"]; // from S
+                    if (dr === 1 && dc === 1) return ["0%", "0%"]; // from NW
+                    if (dr === 1 && dc === -1) return ["100%", "0%"]; // from NE
+                    if (dr === -1 && dc === 1) return ["0%", "100%"]; // from SW
+                    if (dr === -1 && dc === -1) return ["100%", "100%"]; // from SE
+                    return ["50%", "50%"];
+                };
+
+                let i = 0;
+                const pulseSpeed = '0.3s';
+                const pulseDelayStep = 0.05;
                 const interval = setInterval(() => {
-                    if(i + 1 >= path.length) { 
-                        clearInterval(interval); 
-                        // Optional: Auto-remove beams after a delay, or let CSS fade handle it
-                        setTimeout(() => {
-                             DOM.$$('.laser-beam-svg').forEach(el => el.remove());
-                             DOM.$$('.laser-active').forEach(el => el.classList.remove('laser-active'));
-                        }, 2000);
-                        return; 
+                    if(i >= path.length) { 
+                        clearInterval(interval); // Stop the "in" animation
+
+                        // Start the "out" animation
+                        let j = 0;
+                        const fadeInterval = setInterval(() => {
+                            const segment = DOM.$(`[data-laser-step="${j}"]`);
+                            if (segment) segment.remove();
+
+                            j++;
+
+                            if (j >= path.length) {
+                                clearInterval(fadeInterval); // Stop the "out" animation
+                                if (onCompleteCallback) onCompleteCallback(); // Update the board
+                            }
+                        }, 120);
+
+                        return;
                     }
 
                     const [r, c] = path[i];
+                    const prev = path[i-1];
+                    const next = (i + 1 < path.length) ? path[i+1] : null;
 
-                    // Only render if on my side of the board
                     const isMySide = (c >= myZoneStart && c < myZoneEnd);
                     if (isMySide) {
                         const cell = DOM.$(`[data-r="${r}"][data-c="${c}"]`);
 
-                        if(cell) { 
-                            // 1. Calculate Direction (Delta)
-                            let dr = 0, dc = 0;
-                            const next = path[i+1];
-                            const prev = path[i-1];
-
-                            if (prev) {
-                                // --- Calculate INCOMING vector ---
+                        if(cell) { 
+                            cell.style.setProperty('--laser-color', hex);
+                            let svgHTML = '';
+                            if (i === 0 && next) {
+                                const dr_out = next[0] - r;
+                                const dc_out = next[1] - c;
+                                const [x_out, y_out] = getEdgeCoords(dr_out * -1, dc_out * -1);
+                                const delay = i * pulseDelayStep;
+                                const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
+                                svgHTML = `<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
+                            } else if (prev) {
                                 const dr_in = r - prev[0];
                                 const dc_in = c - prev[1];
+                                const isHit = !next;
+                                const dr_out = next ? (next[0] - r) : 0;
+                                const dc_out = next ? (next[1] - c) : 0;
 
-                                // --- Set default vector (use incoming) ---
-                                dr = dr_in;
-                                dc = dc_in;
+                                const isDiagonalIn = dr_in !== 0 && dc_in !== 0;
+                                const isHorizontalOut = dr_out === 0 && dc_out !== 0;
+                                const isHorizontalIn = dr_in === 0 && dc_in !== 0;
+                                const isDiagonalOut = dr_out !== 0 && dc_out !== 0;
 
-                                if (next) {
-                                    // --- Calculate OUTGOING vector ---
-                                    const dr_out = next[0] - r;
-                                    const dc_out = next[1] - c;
+                                const isWallReflect_In = isDiagonalIn && isHorizontalOut;
+                                const isWallReflect_Out = isHorizontalIn && isDiagonalOut;
 
-                                    // --- CORNER LOGIC ---
-                                    // Check if incoming was Straight (H or V)
-                                    const isIncomingStraight = (dr_in === 0 || dc_in === 0);
-                                    // Check if outgoing is Diagonal
-                                    const isOutgoingDiagonal = (dr_out !== 0 && dc_out !== 0);
+                                const isReflection = next && (dr_in !== dr_out || dc_in !== dc_out) && !isWallReflect_In && !isWallReflect_Out;
+                                const isPassthrough = next && !isReflection && !isWallReflect_In && !isWallReflect_Out;
 
-                                    if (isIncomingStraight && isOutgoingDiagonal) {
-                                        // This is the "skid" cell turning into a diagonal.
-                                        // Override the vector to use the OUTGOING one.
-                                        dr = dr_out;
-                                        dc = dc_out;
-                                    }
+                                const [x_in, y_in] = getEdgeCoords(dr_in, dc_in);
+
+                                if (isWallReflect_In) {
+                                    const [x_out, y_out] = getEdgeCoords(dr_in * -1, dc_in * -1);
+                                    svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" />`;
+                                } else if (isWallReflect_Out) {
+                                    const [x_out, y_out] = getEdgeCoords(dr_out * -1, dc_out * -1);
+                                    const [x_in_new, y_in_new] = getEdgeCoords(dr_out, dc_out);
+                                    svgHTML = `<line x1="${x_in_new}" y1="${y_in_new}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" />`;
                                 }
-                                // (else, it's the end of the line, default (dr_in, dc_in) is correct)
-                            } else if (next) { 
-                                // Start of line: Calculate based on where we are going
-                                dr = next[0] - r;
-                                dc = next[1] - c;
+                                else if (isPassthrough) {
+                                    const [x_out, y_out] = getEdgeCoords(dr_out * -1, dc_out * -1);
+                                    const delay = i * pulseDelayStep;
+                                    const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
+                                    svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
+                                } else if (isReflection) {
+                                    const [x_out, y_out] = getEdgeCoords(dr_out * -1, dc_out * -1);
+                                    const delay = i * pulseDelayStep;
+                                    const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
+                                    svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="50%" y2="50%" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />` +
+                                            `<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
+                                } else if (isHit) {
+                                    const delay = i * pulseDelayStep;
+                                    const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
+                                    svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="50%" y2="50%" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
+                                }
                             }
 
-                            // 2. Determine Line Coordinates based on Delta
-                            // Default to Center-Center (dot) if no movement
-                            let x1 = "50%", y1 = "50%", x2 = "50%", y2 = "50%";
-
-                            if (dr === 0 && dc !== 0) { 
-                                // Horizontal (-)
-                                x1 = "0%"; y1 = "50%"; x2 = "100%"; y2 = "50%";
-                            } else if (dr !== 0 && dc === 0) { 
-                                // Vertical (|)
-                                x1 = "50%"; y1 = "0%"; x2 = "50%"; y2 = "100%";
-                            } else if ((dr === 1 && dc === 1) || (dr === -1 && dc === -1)) { 
-                                // Diagonal Main (\) (NW to SE or SE to NW)
-                                x1 = "0%"; y1 = "0%"; x2 = "100%"; y2 = "100%";
-                            } else if ((dr === 1 && dc === -1) || (dr === -1 && dc === 1)) { 
-                                // Diagonal Anti (/) (NE to SW or SW to NE)
-                                x1 = "100%"; y1 = "0%"; x2 = "0%"; y2 = "100%";
-                            }
-
-                            // 3. Set CSS Var for color (used by CSS animations)
-                            cell.style.setProperty('--laser-color', hex);
-
-                            // 4. Inject SVG Line
                             const svg = document.createElement('div');
                             svg.className = 'laser-beam-svg';
-                            svg.innerHTML = `<svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
-                                <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${hex}" stroke-width="15" stroke-linecap="round" />
-                            </svg>`;
+                            svg.dataset.laserStep = i;
+                            svg.innerHTML = `<svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">${svgHTML}</svg>`;
                             cell.appendChild(svg);
-
-                            // 5. Trigger Background Pulse
-                            cell.classList.remove('laser-active'); // reset if needed
-                            void cell.offsetWidth; // force reflow
-                            cell.classList.add('laser-active'); 
                         }
                     }
                     i++;
-                }, 30); // Slightly faster speed (30ms) for a snappier beam
+                }, 120);
             }
         };
 
@@ -1252,38 +1521,53 @@
         const Handlers = {
             init: () => {
                 DOM.$('#save-profile-btn').onclick = () => API.saveProfile(DOM.$('#profile-display-name').value, DOM.$('#profile-color-select').value);
+                
+                // --- Lobby View (Main Menu) Handlers ---
                 DOM.$('#multi-player-btn').onclick = () => {
                     UIManager.show('lobbyList');
-                    API.presence.start();
-                    // Instead of creating a test lobby, we now just refresh the list
+                    API.presence.start(); // Start presence *now*
                     DOM.$('#refresh-lobbies-btn').click();
                 };
+                DOM.$('#edit-name-btn').onclick = () => {
+                    DOM.lobbyNameDisplay.classList.add('hidden');
+                    DOM.lobbyNameEdit.classList.remove('hidden');
+                    DOM.$('#lobby-name-input').value = State.currentUser.profile.displayName;
+                    DOM.$('#lobby-name-input').focus();
+                };
+                DOM.$('#cancel-name-btn').onclick = () => {
+                    DOM.lobbyNameDisplay.classList.remove('hidden');
+                    DOM.lobbyNameEdit.classList.add('hidden');
+                };
+                DOM.$('#save-name-btn').onclick = () => {
+                    const newName = DOM.$('#lobby-name-input').value;
+                    if (newName && newName !== State.currentUser.profile.displayName) {
+                        API.saveProfile(newName, State.currentUser.profile.preferredColor);
+                        UIManager.toast("Name updated!");
+                    }
+                    DOM.lobbyNameDisplay.classList.remove('hidden');
+                    DOM.lobbyNameEdit.classList.add('hidden');
+                };
+
+                // --- Lobby List Handlers ---
                 DOM.$('#refresh-lobbies-btn').onclick = async () => {
                     DOM.lobbyListContainer.innerHTML = "Cleaning & Loading...";
                     
-                    // 1. Get all waiting games
                     const q = query(collection(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games'), where("status", "==", "waitingForOpponent"));
                     const snap = await getDocs(q);
                     
                     DOM.lobbyListContainer.innerHTML = "";
                     
-                    // 2. Iterate through them
-                    snap.forEach(async (docSnapshot) => { // renamed to docSnapshot to avoid confusion
+                    snap.forEach(async (docSnapshot) => { 
                         const d = docSnapshot.data();
-                        
-                        // 3. Check Age (5 minutes = 300,000 ms)
-                        // If createdAt is missing (old games), default to 0 so they get cleaned up, or Date.now() to keep them.
                         const createdAt = d.createdAt || 0; 
                         const age = Date.now() - createdAt;
 
-                        if (age > 300000) {
-                            // If older than 5 mins, DELETE IT and do not render
+                        if (age > 300000) { // 5 mins
                             console.log(`Cleaning up ghost lobby: ${d.lobbyName}`);
                             await deleteDoc(docSnapshot.ref);
                             return; 
                         }
 
-                        // 4. If valid, Render it (Existing logic)
                         const btn = document.createElement('div');
                         btn.className = "bg-gray-800 p-4 rounded flex justify-between items-center cursor-pointer hover:bg-gray-700 border border-indigo-500/30";
                         btn.innerHTML = `<div><div class="font-bold text-cyan-400">${d.lobbyName}</div><div class="text-xs text-gray-400">Host: ${d.players[0].displayName}</div></div><button class="bg-green-600 px-3 py-1 rounded text-white">Join</button>`;
@@ -1295,37 +1579,105 @@
                         DOM.lobbyListContainer.innerHTML = "<div class='text-gray-500 text-center mt-4'>No active lobbies found.</div>";
                     }
                 };
-                DOM.$('#show-create-lobby-btn').onclick = () => {
+                // MODIFIED: To be async
+                DOM.$('#show-create-lobby-btn').onclick = async () => {
                     const defaultName = `${State.currentUser.profile.displayName}'s Game`;
                     const defaultEnergy = 10;
                     const defaultColor = State.currentUser.profile.preferredColor;
                     
-                    API.lobby.create(defaultName, defaultEnergy, defaultColor);
+                    // Await creation so we are immediately put in the lobby
+                    await API.lobby.create(defaultName, defaultEnergy, defaultColor);
                 };
+
+                // --- Invite Handler (Event Delegation) ---
+                DOM.$('#lobby-list-view').onclick = (e) => {
+                    const btn = e.target.closest('.invite-btn');
+                    if (btn && !btn.disabled) {
+                        const { uid, name } = btn.dataset;
+                        Handlers.sendInvite(uid, name);
+                    }
+                };
+                DOM.$('#waiting-room-view').onclick = (e) => {
+                    const btn = e.target.closest('.invite-btn');
+                    if (btn && !btn.disabled) {
+                        const { uid, name } = btn.dataset;
+                        Handlers.sendInvite(uid, name);
+                    }
+                };
+                
+                // --- Old Create Lobby Handlers (now unused) ---
                 DOM.$('#create-lobby-btn').onclick = () => API.lobby.create(DOM.$('#lobby-name-input').value, DOM.$('#energy-pool-select').value, DOM.$('#host-color-select').value);
                 DOM.$('#cancel-create-lobby-btn').onclick = () => UIManager.show('lobbyList');
+
+                // --- Waiting Room & Modal ---
                 DOM.$('#leave-lobby-btn').onclick = API.lobby.leave;
                 DOM.$('#back-to-main-menu-btn').onclick = () => UIManager.show('lobby');
                 DOM.$('#p1-ready-btn').onclick = API.game.toggleReady;
                 DOM.$('#p2-ready-btn').onclick = API.game.toggleReady;
-                DOM.$('#new-game-btn').onclick = () => { DOM.views.modal.classList.add('hidden'); API.lobby.leave(); };
+                DOM.$('#new-game-btn').onclick = () => { 
+                    DOM.views.modal.classList.add('hidden'); 
+                    API.lobby.leave(); // This already sends user to 'lobbyList'
+                    // Manually trigger a refresh after a short delay
+                    setTimeout(() => {
+                        const refreshBtn = DOM.$('#refresh-lobbies-btn');
+                        if (refreshBtn) refreshBtn.click();
+                    }, 100); 
+                };
 
-                // Game Actions
+                // --- Game Actions ---
                 DOM.$('#place-pylon-btn').onclick = () => { State.currentAction = 'place-pylon'; UIManager.renderBoard(); };
                 DOM.$('#place-mirror-btn').onclick = () => { State.currentAction = 'place-mirror'; UIManager.renderBoard(); };
-                DOM.$('#move-nexus-btn').onclick = () => { 
-                    State.currentAction = 'move-nexus-target'; 
-                    State.selectedLocation = State.game.players[State.playerIndex].nexusLocation;
-                    UIManager.renderBoard(); 
+                DOM.$('#move-nexus-btn').onclick = () => {
+                    if (State.currentAction === 'move-nexus-target') {
+                        State.currentAction = null;
+                        State.selectedLocation = null;
+                    } else {
+                        State.currentAction = 'move-nexus-target';
+                        State.selectedLocation = State.game.players[State.playerIndex].nexusLocation;
+                    }
+                    UIManager.renderGame(); // Re-render board and controls
                 };
-                DOM.$('#cancel-action-btn').onclick = () => { State.currentAction = null; State.selectedLocation = null; UIManager.renderBoard(); };
-                DOM.$('#end-phase-btn').onclick = API.game.endPhase;
+
+                // This button is now for CONFIRMING placements
+                DOM.$('#attack-btn').onclick = () => {
+                    const hasBuildingPreviews = State.previewBuildings.length > 0;
+                    const hasNexusPreview = !!State.previewNexusLocation;
+
+                    if (hasBuildingPreviews || hasNexusPreview) {
+                        // Pass both previews to the API function
+                        API.game.confirmBuyMovePhase(State.previewBuildings, State.previewNexusLocation);
+                    } else {
+                        // No previews, just move to attack phase
+                        API.game.endPhase();
+                    }
+                };
+
+                DOM.$('#end-turn-btn').onclick = () => {
+                    API.game.commitAndEndTurn(State.previewBuildings, State.previewNexusLocation);
+                };
+
+                DOM.$('#undo-action-btn').onclick = () => {
+                    State.previewBuildings = [];
+                    State.previewCost = 0;
+                    State.previewNexusLocation = null;
+                    UIManager.renderGame(); // Re-render everything
+                };
 
                 DOM.$$('.mirror-rotate-btn').forEach(btn => {
                     btn.onclick = () => {
                         const orientation = btn.dataset.orientation;
                         State.currentMirrorOrientation = orientation;
                         DOM.$('#mirror-orientation-display').textContent = orientation;
+                        
+                        // Check if last preview building is a mirror
+                        if (State.currentAction === 'place-mirror' && State.previewBuildings.length > 0) {
+                            const lastBuilding = State.previewBuildings[State.previewBuildings.length - 1];
+                            if (lastBuilding.type === 'mirror') {
+                                // Update its orientation live
+                                lastBuilding.orientation = orientation;
+                                UIManager.renderBoard(); // Just re-render the board to show change
+                            }
+                        }
                     };
                 });
                 
@@ -1338,27 +1690,98 @@
                 DOM.$('#skip-attack-btn').onclick = API.game.skipAttack;
             },
             
+            // NEW: Handler for sending invites
+            sendInvite: async (toUid, toName) => {
+                try {
+                    let gameId = State.gameId;
+
+                    // If not in a lobby, create one
+                    if (!gameId) {
+                        UIManager.toast("Creating new lobby...");
+                        const defaultName = `${State.currentUser.profile.displayName}'s Invite Lobby`;
+                        gameId = await API.lobby.create(defaultName, 10, State.currentUser.profile.preferredColor);
+                        if (!gameId) throw new Error("Lobby creation failed.");
+                        // API.lobby.create already starts listening, which will set State.game
+                    }
+                    
+                    // We need to wait for State.game to be populated by the listener
+                    // A simple delay/check, or trust the create() call
+                    if (!State.game) {
+                        // Wait a moment for listener to fire
+                        await new Promise(r => setTimeout(r, 500)); 
+                        if (!State.game) throw new Error("Game state not ready.");
+                    }
+
+                    // Now send the invite
+                    await API.presence.sendInvite(toUid, toName, gameId);
+
+                } catch (err) {
+                    console.error("Invite Error:", err);
+                    UIManager.showError(err.message);
+                }
+            },
+
             boardClick: (r, c) => {
                 const act = State.currentAction;
                 const isMine = (c >= (State.playerIndex === 0 ? 0 : 5) && c < (State.playerIndex === 0 ? 5 : 10));
                 
-                if(act === 'setup' && isMine && !GameLogic.getUnitAt(r,c, State.game)) {
-                    State.selectedLocation = [r,c];
+                // Check for any existing unit (real or preview)
+                const realUnit = GameLogic.getUnitAt(r,c, State.game);
+                const previewUnit = State.previewBuildings.find(b => b.location[0] === r && b.location[1] === c);
+                const previewNexus = State.previewNexusLocation && State.previewNexusLocation[0] === r && State.previewNexusLocation[1] === c;
+                const isOccupied = realUnit || previewUnit || previewNexus;
+
+                // Req #1: Nexus setup just updates the preview
+                if(act === 'setup' && isMine && !realUnit) { 
+                    State.previewNexus = [r,c];
                     UIManager.renderBoard();
-                    UIManager.renderControls(); // Enable button
+                    UIManager.renderControls(0); // Pass 0, budget not relevant
+                    return; // Stop here
                 }
-                if((act === 'place-pylon' || act === 'place-mirror') && isMine && !GameLogic.getUnitAt(r,c, State.game)) {
+                
+                // --- New Building Placement Logic (Req #2, #4, #5) ---
+                const budget = (State.game.turnBudget || 0) - State.previewCost;
+                
+                if((act === 'place-pylon' || act === 'place-mirror') && isMine && !isOccupied) {
+                    if (budget < 1) {
+                        UIManager.toast("Out of budget for this turn.");
+                        return;
+                    }
+                    if (State.game.energyPool - State.previewCost < 1) {
+                        UIManager.toast("Not enough energy in pool.");
+                        return;
+                    }
+                    
                     const type = act.split('-')[1];
-                    const orientation = (type === 'mirror') ? State.currentMirrorOrientation : null;
-                    API.game.placeBuilding(type, [r,c], orientation);
-                    State.currentAction = null;
+                    const newPreviewBuilding = {
+                        type: type,
+                        location: [r,c]
+                    };
+                    
+                    if (type === 'mirror') {
+                        newPreviewBuilding.orientation = State.currentMirrorOrientation;
+                    }
+                    
+                    State.previewBuildings.push(newPreviewBuilding);
+                    State.previewCost += 1;
+                    
+                    // Re-render board and controls (Req #4: allows placing multiples)
+                    UIManager.renderGame();
+                    return; // Stop here
                 }
+                
                 if(act === 'move-nexus-target') {
                     if(GameLogic.isValidNexusMove(State.selectedLocation, [r,c], State.playerIndex, State.game)) {
-                        API.game.moveNexus([r,c]);
+                        State.previewNexusLocation = [r,c]; // Set preview instead of API call
                         State.currentAction = null;
+                        State.selectedLocation = null;
                     }
+                    // Don't return, allow re-render
                 }
+                
+                // Re-render board/controls if no specific action was taken
+                // This is good for deselecting, etc.
+                UIManager.renderGame();
             }
         };
 
@@ -1371,20 +1794,16 @@
         });
     </script>
 
-    <!-- Custom Styles -->
     <style>
         body {
             font-family: 'Inter', sans-serif;
         }
-        /* Use a more sci-fi mono font for headers */
         .font-sci-mono {
             font-family: 'Orbitron', 'Courier New', monospace; /* Fallback to monospace */
         }
         
-        /* Link a sci-fi font (optional, but nice) */
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Orbitron:wght@400;700&display=swap');
 
-        /* Board cell styling */
         .cell {
             box-shadow: inset 0 0 2px rgba(167, 139, 250, 0.2);
         }
@@ -1398,7 +1817,6 @@
             );
         }
         
-        /* Unit styling */
         .unit {
             position: absolute;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -1418,49 +1836,43 @@
         }
 
         /* Laser animation */
-        /* The background pulse for the cell */
-        @keyframes laser-pulse {
-            0% { background-color: var(--laser-color); box-shadow: inset 0 0 20px var(--laser-color); }
-            100% { background-color: transparent; box-shadow: none; }
+        @keyframes laser-wave-pulse {
+            0%, 100% { stroke-width: 15; opacity: 1; }
+            50% { stroke-width: 25; opacity: 0.7; }
         }
-
-        /* The SVG Line itself fading out */
         @keyframes beam-fade {
             0% { opacity: 1; }
-            80% { opacity: 1; } /* Stay visible for a bit */
+            80% { opacity: 1; }
             100% { opacity: 0; }
         }
-
-        .laser-active {
-            /* Background pulse */
-            animation: laser-pulse 1s ease-out;
-        }
-
         .laser-beam-svg {
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
             pointer-events: none;
             z-index: 20;
-            filter: drop-shadow(0 0 4px var(--laser-color)); /* Glow effect on the line */
-            animation: beam-fade 1.5s ease-out forwards;
+            filter: drop-shadow(0 0 4px var(--laser-color));
         }
 
         /* Custom scrollbar */
         #game-log::-webkit-scrollbar,
-        #lobby-list-container::-webkit-scrollbar {
+        #lobby-list-container::-webkit-scrollbar,
+        .online-players-list::-webkit-scrollbar {
             width: 8px;
         }
         #game-log::-webkit-scrollbar-track,
-        #lobby-list-container::-webkit-scrollbar-track {
+        #lobby-list-container::-webkit-scrollbar-track,
+        .online-players-list::-webkit-scrollbar-track {
             background: #2d3748; /* gray-800 */
         }
         #game-log::-webkit-scrollbar-thumb,
-        #lobby-list-container::-webkit-scrollbar-thumb {
+        #lobby-list-container::-webkit-scrollbar-thumb,
+        .online-players-list::-webkit-scrollbar-thumb {
             background: #4a5568; /* gray-600 */
             border-radius: 4px;
         }
         #game-log::-webkit-scrollbar-thumb:hover,
-        #lobby-list-container::-webkit-scrollbar-thumb:hover {
+        #lobby-list-container::-webkit-scrollbar-thumb:hover,
+        .online-players-list::-webkit-scrollbar-thumb:hover {
             background: #718096; /* gray-500 */
         }
     </style>
@@ -1488,25 +1900,49 @@
 
         <div id="lobby-view" class="hidden w-full max-w-md mx-auto p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
             <h1 class="text-3xl font-bold text-center mb-6 font-sci-mono text-cyan-400">Zero-Sum Defense</h1>
+            
             <div class="mb-4 p-3 bg-gray-900 rounded-lg">
                 <p class="text-sm text-gray-400">Welcome,</p>
-                <p id="user-display-name-display" class="font-mono text-lg break-all">...</p>
+                
+                <div id="lobby-user-name-display" class="flex justify-between items-center">
+                    <p id="user-display-name-display" class="font-mono text-lg break-all">...</p>
+                    <button id="edit-name-btn" class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded-md">Edit</button>
+                </div>
+
+                <div id="lobby-user-name-edit" class="hidden space-y-2">
+                    <input id="lobby-name-input" type="text" class="w-full bg-gray-700 text-white p-2 rounded-lg border border-gray-600 outline-none">
+                    <div class="flex gap-2">
+                        <button id="cancel-name-btn" class="w-1/2 text-xs bg-gray-600 hover:bg-gray-500 px-2 py-1 rounded-md">Cancel</button>
+                        <button id="save-name-btn" class="w-1/2 text-xs bg-green-600 hover:bg-green-500 px-2 py-1 rounded-md">Save</button>
+                    </div>
+                </div>
+
                 <p class="text-xs text-gray-500 mt-1">User ID: <span id="user-id-display" class="font-mono break-all">Loading...</span></p>
             </div>
+
             <div class="space-y-4">
                 <button id="single-player-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-lg opacity-50 cursor-not-allowed" disabled>Singleplayer (Soon)</button>
                 <button id="multi-player-btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg">Multiplayer</button>
             </div>
         </div>
         
-        <div id="lobby-list-view" class="hidden w-full max-w-lg mx-auto p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
-            <h1 class="text-3xl font-bold text-center mb-6 font-sci-mono text-cyan-400">Open Lobbies</h1>
-            <div class="flex justify-between mb-4">
-                <button id="back-to-main-menu-btn" class="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg">&larr; Main Menu</button>
-                <button id="refresh-lobbies-btn" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded-lg">Refresh</button>
+        <div id="lobby-list-view" class="hidden w-full max-w-4xl mx-auto flex flex-col md:flex-row gap-4">
+            <div class="flex-grow p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
+                <h1 class="text-3xl font-bold text-center mb-6 font-sci-mono text-cyan-400">Open Lobbies</h1>
+                <div class="flex justify-between mb-4">
+                    <button id="back-to-main-menu-btn" class="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg">&larr; Main Menu</button>
+                    <button id="refresh-lobbies-btn" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded-lg">Refresh</button>
+                </div>
+                <div id="lobby-list-container" class="space-y-3 max-h-96 overflow-y-auto p-2 bg-gray-900/50 rounded-lg"></div>
+                <button id="show-create-lobby-btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg mt-6">+ Create New Lobby</button>
             </div>
-            <div id="lobby-list-container" class="space-y-3 max-h-96 overflow-y-auto p-2 bg-gray-900/50 rounded-lg"></div>
-            <button id="show-create-lobby-btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg mt-6">+ Create New Lobby</button>
+
+            <div class="w-full md:w-64 lg:w-80 flex-shrink-0 p-4 bg-gray-900/80 rounded-lg border border-gray-700">
+                <h3 class="text-sm font-bold text-gray-400 uppercase tracking-widest mb-3 border-b border-gray-700 pb-2">Online / LFG</h3>
+                <div class="online-players-list space-y-1 max-h-96 overflow-y-auto text-sm">
+                    <p class="text-gray-500 italic">Scanning...</p>
+                </div>
+            </div>
         </div>
 
         <div id="create-lobby-view" class="hidden w-full max-w-md mx-auto p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
@@ -1514,7 +1950,7 @@
             <div class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-400 mb-1">Lobby Name</label>
-                    <input id="lobby-name-input" type="text" class="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 outline-none">
+                    <input id="lobby-name-input-old" type="text" class="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 outline-none">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-400 mb-1">Starting Energy</label>
@@ -1579,9 +2015,9 @@
                 <button id="leave-lobby-btn" class="w-full bg-red-900/80 hover:bg-red-800 text-white font-bold py-2 px-4 rounded-lg transition-all shadow-lg">Leave Lobby</button>
             </div>
 
-            <div class="w-full md:w-64 flex-shrink-0 p-4 bg-gray-900/80 rounded-lg border border-gray-700">
+            <div class="w-full md:w-64 lg:w-80 flex-shrink-0 p-4 bg-gray-900/80 rounded-lg border border-gray-700">
                 <h3 class="text-sm font-bold text-gray-400 uppercase tracking-widest mb-3 border-b border-gray-700 pb-2">Online / LFG</h3>
-                <div id="online-players-list" class="space-y-2 max-h-96 overflow-y-auto text-sm">
+                <div class="online-players-list space-y-1 max-h-96 overflow-y-auto text-sm">
                     <p class="text-gray-500 italic">Scanning...</p>
                 </div>
             </div>
@@ -1616,7 +2052,8 @@
                                 <button id="place-pylon-btn" class="w-full bg-cyan-700 hover:bg-cyan-600 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg">Pylon (1E)</button>
                                 <button id="place-mirror-btn" class="w-full bg-purple-700 hover:bg-purple-600 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg">Mirror (1E)</button>
                             </div>
-                            <div id="mirror-rotation-controls" class="p-2 bg-gray-900/50 rounded-lg">
+                            
+                            <div id="mirror-rotation-controls" class="hidden p-2 bg-gray-900/50 rounded-lg">
                                 <p class="text-center text-xs text-gray-400 mb-2">Mirror Orientation: <span id="mirror-orientation-display" class="font-bold text-purple-300">N</span></p>
                                 <div class="grid grid-cols-3 gap-1 w-32 mx-auto">
                                     <button data-orientation="NW" class="mirror-rotate-btn aspect-square bg-purple-900/70 hover:bg-purple-800 rounded-lg text-xs">NW</button>
@@ -1630,10 +2067,17 @@
                                     <button data-orientation="SE" class="mirror-rotate-btn aspect-square bg-purple-900/70 hover:bg-purple-800 rounded-lg text-xs">SE</button>
                                 </div>
                             </div>
+                            
                             <button id="move-nexus-btn" class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg">Move Nexus</button>
-                            <button id="cancel-action-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold p-2 rounded-lg text-sm">Cancel Action</button>
-                            <hr class="border-gray-600 my-3">
-                            <button id="end-phase-btn" class="w-full bg-green-600 hover:bg-green-500 text-white font-bold p-3 rounded-lg text-lg">Ready to Attack</button>
+                            
+                            <hr id="buy-move-separator" class="border-gray-600 my-3">
+                            
+                            <button id="undo-action-btn" class="w-full bg-yellow-700 hover:bg-yellow-600 disabled:bg-gray-600 text-white font-bold p-2 rounded-lg text-sm">Undo</button>
+                            
+                            <div class="flex gap-2">
+                                <button id="end-turn-btn" class="w-1/3 bg-green-600 hover:bg-green-500 text-white font-bold p-3 rounded-lg text-base">End Turn</button>
+                                <button id="attack-btn" class="w-2/3 bg-red-800 hover:bg-red-700 text-white font-bold p-3 rounded-lg text-lg">Attack</button>
+                            </div>
                         </div>
 
                         <div id="attack-controls" class="hidden">
@@ -1650,7 +2094,7 @@
                                 <button id="attack-se-btn" data-dir="SE" class="aspect-square bg-red-800 hover:bg-red-700 rounded-lg font-bold">SE</button>
                             </div>
                             <hr class="border-gray-600 my-3">
-                            <button id="skip-attack-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold p-3 rounded-lg text-lg">Skip Attack</button>
+                            <button id="skip-attack-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold p-3 rounded-lg text-lg">Hold Fire</button>
                         </div>
 
                         <div id="waiting-controls" class="hidden text-center">
