@@ -1614,6 +1614,17 @@ const API = {
 // 6. UI MANAGER (Rendering)
 // ==========================================
 const UIManager = {
+    getEdgeCoords: (dr, dc) => {
+        if (dr === 0 && dc === 1) return ["0%", "50%"]; // from W
+        if (dr === 0 && dc === -1) return ["100%", "50%"]; // from E
+        if (dr === 1 && dc === 0) return ["50%", "0%"]; // from N
+        if (dr === -1 && dc === 0) return ["50%", "100%"]; // from S
+        if (dr === 1 && dc === 1) return ["0%", "0%"]; // from NW
+        if (dr === 1 && dc === -1) return ["100%", "0%"]; // from NE
+        if (dr === -1 && dc === 1) return ["0%", "100%"]; // from SW
+        if (dr === -1 && dc === -1) return ["100%", "100%"]; // from SE
+        return ["50%", "50%"]; // Center/Fallback
+    },
     show: (viewName) => {
         Object.values(DOM.views).forEach(v => v.classList.add('hidden'));
         if(DOM.views[viewName]) DOM.views[viewName].classList.remove('hidden');
@@ -1993,11 +2004,10 @@ const UIManager = {
     
     renderBoard: () => {
         const g = State.game;
-        if (!g || !g.players) return; // Safety check
+        if (!g || !g.players) return; 
 
         DOM.gameBoard.innerHTML = '';
         
-        // Sandbox mode zone logic
         let myZoneStart, myZoneEnd;
         if (g.players.length > 1) {
             myZoneStart = State.playerIndex === 0 ? 0 : 5;
@@ -2007,6 +2017,10 @@ const UIManager = {
             myZoneEnd = 10;
         }
 
+        // Pre-parse laser path for performance
+        const laserPath = g.lastLaserPath ? JSON.parse(g.lastLaserPath) : null;
+        const laserVector = g.lastShotVector;
+
         for(let r=0; r<CONSTANTS.BOARD_ROWS; r++){
             for(let c=0; c<CONSTANTS.BOARD_COLS; c++){
                 const cell = document.createElement('div');
@@ -2015,15 +2029,75 @@ const UIManager = {
 
                 const isMyZone = c >= myZoneStart && c < myZoneEnd;
                 if(isMyZone) cell.classList.add(CONSTANTS.COLOR_MAP[g.players[State.playerIndex].color].bg);
-                else cell.classList.add('bg-gray-800/50'); // Shroud style
+                else cell.classList.add('bg-gray-800/50'); 
 
-                // --- RENDER UNITS ---
-                // We now read directly from 'g' (State.game) because we update it locally immediately
+                // --- 1. RENDER SCORCHED TRAIL (Layer 0) ---
+                let scorchSVG = '';
+                // Show scorch if: My Zone OR (FOW Disabled & Local)
+                const isScorchVisible = isMyZone || (g.fowDisabled && g.isLocal);
+
+                if (laserPath && isScorchVisible) {
+                    laserPath.forEach((loc, i) => {
+                        if (loc[0] === r && loc[1] === c) {
+                            const prev = laserPath[i-1];
+                            const next = laserPath[i+1];
+                            let lines = [];
+
+                            // Geometry Logic (Mirrors animateLaser)
+                            if (i === 0 && next) {
+                                // Nexus Start
+                                let dr_out, dc_out;
+                                if (laserVector) {
+                                    [dr_out, dc_out] = laserVector;
+                                } else {
+                                    dr_out = next[0] - r; dc_out = next[1] - c;
+                                }
+                                const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
+                                lines.push(`<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" />`);
+                            } else if (prev) {
+                                const dr_in = r - prev[0];
+                                const dc_in = c - prev[1];
+                                const dr_out = next ? (next[0] - r) : 0;
+                                const dc_out = next ? (next[1] - c) : 0;
+
+                                const isWallReflect_In = (dr_in !== 0 && dc_in !== 0) && (dr_out === 0 && dc_out !== 0);
+                                const isWallReflect_Out = (dr_in === 0 && dc_in !== 0) && (dr_out !== 0 && dc_out !== 0);
+                                const isReflection = next && (dr_in !== dr_out || dc_in !== dc_out) && !isWallReflect_In && !isWallReflect_Out;
+                                const isPassthrough = next && !isReflection && !isWallReflect_In && !isWallReflect_Out;
+                                const isHit = !next;
+
+                                const [x_in, y_in] = UIManager.getEdgeCoords(dr_in, dc_in);
+
+                                if (isWallReflect_In) {
+                                    const [x_out, y_out] = UIManager.getEdgeCoords(dr_in * -1, dc_in * -1);
+                                    lines.push(`<line x1="${x_in}" y1="${y_in}" x2="${x_out}" y2="${y_out}" />`);
+                                } else if (isWallReflect_Out) {
+                                    const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
+                                    const [x_in_new, y_in_new] = UIManager.getEdgeCoords(dr_out, dc_out);
+                                    lines.push(`<line x1="${x_in_new}" y1="${y_in_new}" x2="${x_out}" y2="${y_out}" />`);
+                                } else if (isPassthrough || isHit) {
+                                    const endPt = isPassthrough ? UIManager.getEdgeCoords(dr_out * -1, dc_out * -1) : ["50%", "50%"];
+                                    lines.push(`<line x1="${x_in}" y1="${y_in}" x2="${endPt[0]}" y2="${endPt[1]}" />`);
+                                } else if (isReflection) {
+                                    const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
+                                    lines.push(`<line x1="${x_in}" y1="${y_in}" x2="50%" y2="50%" />`);
+                                    lines.push(`<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" />`);
+                                }
+                            }
+                            
+                            lines.forEach(l => scorchSVG += l);
+                        }
+                    });
+                }
+                
+                // Wrap scorch in SVG container
+                const scorchLayer = scorchSVG ? `<div class="absolute inset-0 z-0 pointer-events-none"><svg width="100%" height="100%" stroke="black" stroke-width="8" stroke-opacity="0.4" stroke-linecap="round">${scorchSVG}</svg></div>` : '';
+
+                // --- 2. RENDER UNITS (Layer 10) ---
                 let unit = GameLogic.getUnitAt(r, c, g);
                 let unitToRender = unit;
                 let isPreview = false;
 
-                // Special Case: Initial Nexus Setup (Before it exists in players array)
                 if (!unit && State.currentAction === 'setup' && State.previewNexus) {
                     if (State.previewNexus[0] === r && State.previewNexus[1] === c) {
                         unitToRender = { type: 'nexus', ownerIdx: State.playerIndex, hp: g.players[State.playerIndex].nexusHP };
@@ -2031,22 +2105,18 @@ const UIManager = {
                     }
                 }
 
+                let unitLayer = '';
                 if(unitToRender) {
                     const isMyUnit = unitToRender.ownerIdx === State.playerIndex;
                     const isOpponentUnit = g.players.length > 1 && !isMyUnit;
 
-                    // MODIFIED: FOW Logic
-                    // Show if: Mine OR My Zone OR (FOW Disabled AND Local Game)
                     let showUnit = isMyUnit || isMyZone || (g.fowDisabled && g.isLocal);
-                    
-                    // Standard FOW check (only applies if FOW is NOT disabled)
                     if (g.players.length > 1 && isOpponentUnit && !isMyZone && !g.fowDisabled) {
                         showUnit = false;
                     }
                     
                     if(showUnit) { 
                         const color = CONSTANTS.COLOR_MAP[g.players[unitToRender.ownerIdx].color];
-
                         let svg;
                         if (unitToRender.type === 'nexus') {
                             svg = CONSTANTS.SVGS.NEXUS;
@@ -2059,26 +2129,24 @@ const UIManager = {
                         }
 
                         const maxHp = unitToRender.type === 'nexus' ? g.nexusHP : CONSTANTS.BUILDING_HP;
-                        // For setup preview, show "PREVIEW" text
                         const hpDisplay = (isPreview) ? `<div class="absolute bottom-0 right-0 text-[10px] bg-black/80 px-1 text-blue-300">PREVIEW</div>` : `<div class="absolute bottom-0 right-0 text-[10px] bg-black/80 px-1 text-white">${unitToRender.hp}/${maxHp}</div>`;
                         const previewClass = (isPreview) ? 'opacity-75' : '';
                         
-                        cell.innerHTML = `<div class="absolute inset-0 p-1 ${color.stroke} ${color.bg} ${previewClass}">${svg}</div>${hpDisplay}`;
+                        // Note: Added relative z-10 to put unit above scorch mark
+                        unitLayer = `<div class="absolute inset-0 p-1 z-10 ${color.stroke} ${color.bg} ${previewClass}">${svg}</div>${hpDisplay}`;
                     }
                 }
 
-                // --- HIGHLIGHTS ---
-                
-                // Highlight 1: Valid Move Target (Yellow Pulse)
+                cell.innerHTML = scorchLayer + unitLayer;
+
+                // --- 3. HIGHLIGHTS ---
                 if(State.currentAction === 'move-nexus-target') {
                     const isBlocked = GameLogic.getUnitAt(r, c, g); 
-                    // isValidNexusMove now checks State.game, so it accounts for new buildings
                     if(!isBlocked && GameLogic.isValidNexusMove(State.selectedLocation, [r,c], State.playerIndex, g, [])) {
                         cell.classList.add('cursor-pointer', 'bg-yellow-500/30', 'animate-pulse');
                     }
                 }
 
-                // Highlight 2: Placement Hover Hints (Cursor)
                 const isEmpty = !unit && !unitToRender;
                 if (isMyZone && isEmpty) {
                     if(State.currentAction === 'setup') cell.classList.add('cursor-pointer', 'hover:bg-white/20');
@@ -2226,27 +2294,16 @@ const UIManager = {
             myZoneEnd = CONSTANTS.BOARD_COLS;
         }
 
-
-        const getEdgeCoords = (dr, dc) => {
-            if (dr === 0 && dc === 1) return ["0%", "50%"]; // from W
-            if (dr === 0 && dc === -1) return ["100%", "50%"]; // from E
-            if (dr === 1 && dc === 0) return ["50%", "0%"]; // from N
-            if (dr === -1 && dc === 0) return ["50%", "100%"]; // from S
-            if (dr === 1 && dc === 1) return ["0%", "0%"]; // from NW
-            if (dr === 1 && dc === -1) return ["100%", "0%"]; // from NE
-            if (dr === -1 && dc === 1) return ["0%", "100%"]; // from SW
-            if (dr === -1 && dc === -1) return ["100%", "100%"]; // from SE
-            return ["50%", "50%"];
-        };
+        // REMOVED: Local getEdgeCoords function. 
+        // We now use UIManager.getEdgeCoords defined above.
 
         let i = 0;
         const pulseSpeed = '0.5s';
         const pulseDelayStep = 0.05;
         const interval = setInterval(() => {
             if(i >= path.length) { 
-                clearInterval(interval); // Stop the "in" animation
+                clearInterval(interval); 
 
-                // Start the "out" animation
                 let j = 0;
                 const fadeInterval = setInterval(() => {
                     const segment = DOM.$(`[data-laser-step="${j}"]`);
@@ -2255,8 +2312,8 @@ const UIManager = {
                     j++;
 
                     if (j >= path.length) {
-                        clearInterval(fadeInterval); // Stop the "out" animation
-                        if (onCompleteCallback) onCompleteCallback(); // Update the board
+                        clearInterval(fadeInterval); 
+                        if (onCompleteCallback) onCompleteCallback(); 
                     }
                 }, 120);
 
@@ -2267,7 +2324,6 @@ const UIManager = {
             const prev = path[i-1];
             const next = (i + 1 < path.length) ? path[i+1] : null;
 
-            // MODIFIED: FOW for laser
             const isMySide = (c >= myZoneStart && c < myZoneEnd);
             if (State.game.players.length === 1 || isMySide) {
                 const cell = DOM.$(`[data-r="${r}"][data-c="${c}"]`);
@@ -2278,13 +2334,12 @@ const UIManager = {
                     if (i === 0 && next) {
                         let dr_out, dc_out;
                         if (shotVector) {
-                            [dr_out, dc_out] = shotVector; // Use the direct shot vector
+                            [dr_out, dc_out] = shotVector; 
                         } else {
-                            // Fallback to old logic just in case
                             dr_out = next[0] - r;
                             dc_out = next[1] - c;
                         }
-                        const [x_out, y_out] = getEdgeCoords(dr_out * -1, dc_out * -1);
+                        const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
                         const delay = i * pulseDelayStep;
                         const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
                         svgHTML = `<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
@@ -2306,31 +2361,31 @@ const UIManager = {
                         const isReflection = next && (dr_in !== dr_out || dc_in !== dc_out) && !isWallReflect_In && !isWallReflect_Out;
                         const isPassthrough = next && !isReflection && !isWallReflect_In && !isWallReflect_Out;
 
-                        const [x_in, y_in] = getEdgeCoords(dr_in, dc_in);
+                        const [x_in, y_in] = UIManager.getEdgeCoords(dr_in, dc_in);
 
                         if (isWallReflect_In) {
-                            const [x_out, y_out] = getEdgeCoords(dr_in * -1, dc_in * -1);
+                            const [x_out, y_out] = UIManager.getEdgeCoords(dr_in * -1, dc_in * -1);
                             const delay = i * pulseDelayStep;
                             const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
                             svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
                         } else if (isWallReflect_Out) {
-                            const [x_out, y_out] = getEdgeCoords(dr_out * -1, dc_out * -1);
-                            const [x_in_new, y_in_new] = getEdgeCoords(dr_out, dc_out);
+                            const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
+                            const [x_in_new, y_in_new] = UIManager.getEdgeCoords(dr_out, dc_out);
                             const delay = i * pulseDelayStep;
                             const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
                             svgHTML = `<line x1="${x_in_new}" y1="${y_in_new}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
                         }
                         else if (isPassthrough) {
-                            const [x_out, y_out] = getEdgeCoords(dr_out * -1, dc_out * -1);
+                            const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
                             const delay = i * pulseDelayStep;
                             const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
                             svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
                         } else if (isReflection) {
-                            const [x_out, y_out] = getEdgeCoords(dr_out * -1, dc_out * -1);
+                            const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
                             const delay = i * pulseDelayStep;
                             const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
                             svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="50%" y2="50%" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />` +
-                                        `<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
+                                      `<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
                         } else if (isHit) {
                             const delay = i * pulseDelayStep;
                             const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
