@@ -182,7 +182,10 @@ const State = {
     },
     intervals: {
         heartbeat: null
-    }
+    },
+
+    isAiGame: false,
+    aiProcessing: false, 
 };
 
 // ==========================================
@@ -426,6 +429,140 @@ const GameLogic = {
             }
         }
         return { path, hits, log };
+    }
+};
+
+// main.js: Insert after GameLogic object (around line 360)
+
+// main.js: Replace the existing AILogic object
+
+const AILogic = {
+    getRandomInt: (max) => Math.floor(Math.random() * max),
+
+    getValidSpawn: (game) => {
+        // AI owns columns 5-9
+        while (true) {
+            const r = AILogic.getRandomInt(CONSTANTS.BOARD_ROWS);
+            const c = 5 + AILogic.getRandomInt(5);
+            if (!GameLogic.getUnitAt(r, c, game)) return [r, c];
+        }
+    },
+
+    calculateDefense: (game) => {
+        const buildings = [];
+        let cost = 0;
+        // AI Pylon count for budget
+        const aiPlayer = game.players[1];
+        const pylonCount = aiPlayer.buildings.filter(b => b.type === 'pylon').length;
+        let budget = Math.min(pylonCount + 1, game.energyPool);
+        
+        // 1. Analyze Threat (Last Laser Path)
+        if (game.lastLaserPath) {
+            try {
+                const path = JSON.parse(game.lastLaserPath);
+                // Find first point in AI territory (col >= 5) that is empty
+                const threatPoint = path.find(([r, c]) => c >= 5 && !GameLogic.getUnitAt(r, c, game));
+                
+                if (threatPoint && budget >= CONSTANTS.COST.MIRROR) {
+                    const orientations = ['NW', 'SW', 'W']; 
+                    const orientation = orientations[AILogic.getRandomInt(orientations.length)];
+                    
+                    buildings.push({
+                        type: 'mirror',
+                        location: threatPoint,
+                        orientation: orientation
+                    });
+                    budget -= CONSTANTS.COST.MIRROR;
+                    cost += CONSTANTS.COST.MIRROR;
+                }
+            } catch (e) { console.error("AI Path Parse Error", e); }
+        }
+
+        // 2. Spend remaining budget on Pylons or Random Mirrors
+        while (budget > 0) {
+             const r = AILogic.getRandomInt(CONSTANTS.BOARD_ROWS);
+             const c = 5 + AILogic.getRandomInt(5);
+             
+             if (!GameLogic.getUnitAt(r, c, game) && !buildings.find(b => b.location[0]===r && b.location[1]===c)) {
+                 if (Math.random() > 0.5) {
+                     buildings.push({ type: 'pylon', location: [r, c] });
+                     budget -= CONSTANTS.COST.PYLON;
+                 } else {
+                     const dirs = Object.keys(CONSTANTS.REFLECTION_MAP);
+                     buildings.push({ 
+                         type: 'mirror', 
+                         location: [r, c], 
+                         orientation: dirs[AILogic.getRandomInt(dirs.length)] 
+                     });
+                     budget -= CONSTANTS.COST.MIRROR;
+                 }
+             } else {
+                 break; 
+             }
+        }
+        
+        return buildings;
+    },
+
+    getAttackVector: (game) => {
+        // 1. Counter Attack
+        if (game.lastShotVector) {
+            const [dr, dc] = game.lastShotVector;
+            if (dc > 0) return [0, -1]; 
+        }
+        // 2. Random Attack
+        const dirs = Object.values(CONSTANTS.DIRECTIONS);
+        return dirs[AILogic.getRandomInt(dirs.length)];
+    },
+
+    processTurn: async () => {
+        // 1. LOCK: Prevent double-execution
+        if (State.aiProcessing) return;
+        State.aiProcessing = true;
+
+        const game = State.game;
+        const aiIdx = 1;
+
+        try {
+            // Artificial Delay for "Thinking"
+            await new Promise(r => setTimeout(r, 1000));
+
+            if (game.phase === 'setup') {
+                const loc = AILogic.getValidSpawn(game);
+                await API.game.placeNexus(loc, aiIdx); 
+                // Setup is done. Phase switches to buyMove, but turn is 0 (Player). AI sleeps.
+            } 
+            else if (game.phase === 'buyMove') {
+                const buildings = AILogic.calculateDefense(game);
+                
+                // This updates DB -> Phase becomes 'attack'
+                await API.game.confirmBuyMovePhase(buildings, null, aiIdx);
+                
+                // CRITICAL FIX: The listener might have fired while we were awaiting above.
+                // Since 'aiProcessing' was true, that trigger was ignored.
+                // We must now manually trigger the next step (Attack).
+                
+                State.aiProcessing = false; // Unlock explicitly
+                
+                // Give a tiny delay for State.game to update via listener, then recurse
+                setTimeout(() => AILogic.processTurn(), 50);
+                return; 
+            } 
+            else if (game.phase === 'attack') {
+                const [dr, dc] = AILogic.getAttackVector(game);
+                await API.game.attack(dr, dc, aiIdx);
+                // Attack updates DB -> Turn becomes 0 (Player). AI sleeps.
+            }
+        } catch (err) {
+            console.error("AI Logic Error:", err);
+        } finally {
+            // 2. UNLOCK: Ensure we always unlock, even if logic crashed
+            if (State.game.phase !== 'buyMove') { 
+                // Note: We intentionally left it unlocked inside the buyMove block 
+                // to allow the recursion. For other phases, we unlock here.
+                State.aiProcessing = false;
+            }
+        }
     }
 };
 
@@ -789,6 +926,26 @@ const API = {
                     if(State.game.status === 'inProgress' || State.game.status === 'gameOver') {
                         UIManager.show('game');
                         UIManager.renderGame();
+
+                        // === FIXED AI HOOK ===
+                        // 1. Robustness: Auto-detect AI game (persists through refresh)
+                        if (State.game.players[1] && State.game.players[1].userId === 'AI_BOT') {
+                            State.isAiGame = true;
+                        }
+
+                        // 2. Trigger Logic
+                        if (State.isAiGame && State.game.status === 'inProgress') {
+                            const aiP = State.game.players[1];
+                            const isAiTurn = State.game.turn === 1;
+                            // AI must act if it's their turn OR if it's setup and they have no Nexus
+                            const isAiSetupActionNeeded = State.game.phase === 'setup' && !aiP.nexusLocation;
+
+                            if (isAiTurn || isAiSetupActionNeeded) {
+                                AILogic.processTurn();
+                            }
+                        }
+                        // === END AI HOOK ===
+
                     } else {
                         UIManager.show('waitingRoom');
                         UIManager.renderWaitingRoom();
@@ -867,144 +1024,7 @@ const API = {
                 UIManager.showError("Failed to start game. Check console/FireStore rules.");
             }
         },
-        placeNexus: async (loc) => {
-            const newP = JSON.parse(JSON.stringify(State.game.players));
-            newP[State.playerIndex].nexusLocation = loc;
-            newP[State.playerIndex].nexusStartLoc = loc;
-            
-            let updates = { players: newP, log: [...State.game.log, "Nexus Placed."] };
-            updates.lastUpdated = Date.now();
-            
-            // Check if both ready
-            const p1 = newP[0];
-            const p2 = newP[1]; // Might be undefined in sandbox
-            
-            // MODIFIED: Check works for both 1-player and 2-player games
-            if(p1.nexusLocation && (newP.length === 1 || p2?.nexusLocation)) {
-                updates.status = 'inProgress';
-                updates.phase = 'buyMove';
-                const newEnergyPool = State.game.maxEnergy;
-                updates.energyPool = newEnergyPool;
-                // Player 0 (turn 0) has 0 pylons. Budget = min(0 + 1, energyPool)
-                updates.turnBudget = Math.min(1, newEnergyPool);
-                updates.log.push("All Nexus placed. Phase: Buy/Move");
-            }
-            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
-        },
-        confirmBuyMovePhase: async (buildingsToPlace, nexusMoveLocation) => {
-            const newP = JSON.parse(JSON.stringify(State.game.players));
-            const myP = newP[State.playerIndex];
 
-            let totalCost = 0;
-            let newLogs = [...State.game.log];
-            if (nexusMoveLocation) {
-                myP.nexusLocation = nexusMoveLocation;
-                newLogs.push(`Nexus moved.`);
-            }
-
-            buildingsToPlace.forEach(b => {
-                const newBuilding = { type: b.type, location: b.location, hp: CONSTANTS.BUILDING_HP };
-                if (b.type === 'mirror') {
-                    newBuilding.orientation = b.orientation || 'N';
-                    newLogs.push(`Placed ${newBuilding.orientation} Mirror.`);
-                } else {
-                    newLogs.push(`Placed ${b.type}.`);
-                }
-                myP.buildings.push(newBuilding);
-                totalCost += 1; // Still count for logs, but we'll zero it out
-            });
-
-            // ADD THIS BLOCK
-            const isSandbox = newP.length === 1;
-            const finalCost = isSandbox ? 0 : totalCost;
-            if (isSandbox && totalCost > 0) {
-                newLogs.push(`Placed ${totalCost} buildings (free).`);
-            }
-            // END ADD
-
-            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                players: newP,
-                // MODIFY THIS LINE
-                energyPool: (State.game.energyPool - finalCost) + State.game.pendingEnergyRefund,
-                // MODIFY THIS LINE
-                turnBudget: State.game.turnBudget - finalCost,
-                phase: 'attack',
-                pendingEnergyRefund: 0,
-                lastUpdated: Date.now(),
-                log: [...newLogs, "Attack Phase."]
-            });
-        },
-        endPhase: async () => {
-            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                phase: 'attack',
-                lastUpdated: Date.now(),
-                log: [...State.game.log, "Attack Phase."]
-            });
-        },
-        attack: async (dx, dy) => {
-            try {
-                const startLoc = State.game.players[State.playerIndex].nexusLocation;
-                const { path, hits, log } = GameLogic.traceLaser(startLoc, [dx, dy], State.game);
-                
-                // Apply Damage
-                const newP = JSON.parse(JSON.stringify(State.game.players));
-                let destroyedCount = 0;
-                let gameOver = false;
-                let winner = -1;
-
-                hits.forEach(h => {
-                    if (h.type === 'nexus') {
-                        newP[h.ownerIdx].nexusHP--;
-                        if(newP[h.ownerIdx].nexusHP <= 0) { 
-                            gameOver = true; 
-                            winner = (h.ownerIdx + 1) % newP.length; 
-                        }
-                    } else {
-                        newP[h.ownerIdx].buildings = newP[h.ownerIdx].buildings.filter(b => 
-                            !(b.location[0] === h.location[0] && b.location[1] === h.location[1])
-                        );
-                        destroyedCount++;
-                    }
-                });
-
-                const nextTurn = (State.game.turn + 1) % newP.length;
-                // Apply refunds
-                const nextPool = State.game.energyPool;
-
-                // Calculate next player's budget
-                const nextPlayer = newP[nextTurn];
-                const nextPlayerPylons = nextPlayer?.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
-                const newTurnBudget = Math.min(nextPlayerPylons + 1, nextPool);
-                
-                if(nextPlayer?.nexusLocation) nextPlayer.nexusStartLoc = nextPlayer.nexusLocation;
-
-                let updates = {
-                    players: newP,
-                    log: [...State.game.log, ...log],
-                    lastShotVector: [dx, dy],
-                    lastLaserPath: JSON.stringify(path),
-                    lastAttackId: Date.now(),
-                    lastUpdated: Date.now(),
-                    turn: nextTurn,
-                    phase: 'buyMove',
-                    energyPool: nextPool,
-                    turnBudget: newTurnBudget,
-                    pendingEnergyRefund: destroyedCount
-                };
-                
-                if(gameOver) {
-                    updates.status = 'gameOver';
-                    updates.winner = winner;
-                    updates.log.push("GAME OVER!");
-                }
-
-                await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
-                
-            } catch (err) {
-                console.error("Attack Error:", err);
-                UIManager.toast("Error attacking: " + err.message);
-            }
-        },
         skipAttack: async () => {
             const newP = JSON.parse(JSON.stringify(State.game.players));
             const nextTurn = (State.game.turn + 1) % newP.length;
@@ -1127,7 +1147,187 @@ const API = {
                 lastUpdated: Date.now(),
                 log: [...State.game.log, `${State.game.players[1].displayName} was kicked by the host.`]
             });
-        }
+        },
+
+        startAIGame: async (energy, nexusHP) => {
+            State.isAiGame = true;
+            const coll = collection(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games');
+            
+            const gameData = {
+                lobbyName: "vs AI Bot",
+                status: 'inProgress', 
+                phase: 'setup',
+                createdAt: Date.now(),
+                maxEnergy: parseInt(energy),
+                energyPool: parseInt(energy),
+                nexusHP: parseInt(nexusHP),
+                pendingEnergyRefund: 0,
+                turn: 0,
+                turnBudget: 0, // Explicitly init budget
+                lastShotVector: null,
+                log: [`Match vs AI started.`],
+                lastUpdated: Date.now(),
+                players: [
+                    {
+                        userId: State.currentUser.uid,
+                        displayName: State.currentUser.profile.displayName,
+                        color: State.currentUser.profile.preferredColor,
+                        nexusLocation: null,
+                        nexusHP: parseInt(nexusHP),
+                        buildings: [],
+                        isReady: true
+                    },
+                    {
+                        userId: 'AI_BOT',
+                        displayName: 'Defense Bot 9000',
+                        color: 'Red', // AI Default
+                        nexusLocation: null,
+                        nexusHP: parseInt(nexusHP),
+                        buildings: [],
+                        isReady: true
+                    }
+                ]
+            };
+            
+            // Fix color conflict if player is Red
+            if (gameData.players[0].color === 'Red') gameData.players[1].color = 'Blue';
+
+            const ref = await addDoc(coll, gameData);
+            API.game.listen(ref.id);
+            return ref.id;
+        },
+
+        // MODIFIED: Accepts actingPlayerIndex
+        placeNexus: async (loc, actingPlayerIndex = State.playerIndex) => {
+            const newP = JSON.parse(JSON.stringify(State.game.players));
+            newP[actingPlayerIndex].nexusLocation = loc;
+            newP[actingPlayerIndex].nexusStartLoc = loc;
+            
+            let updates = { players: newP, log: [...State.game.log, `${newP[actingPlayerIndex].displayName} placed Nexus.`] };
+            updates.lastUpdated = Date.now();
+            
+            const p1 = newP[0];
+            const p2 = newP[1]; 
+            
+            if(p1.nexusLocation && p2 && p2.nexusLocation) {
+                updates.status = 'inProgress';
+                updates.phase = 'buyMove';
+                const newEnergyPool = State.game.maxEnergy;
+                updates.energyPool = newEnergyPool;
+                updates.turnBudget = Math.min(1, newEnergyPool);
+                updates.log.push("All Nexus placed. Phase: Buy/Move");
+            }
+            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
+        },
+
+        // MODIFIED: Accepts actingPlayerIndex
+        confirmBuyMovePhase: async (buildingsToPlace, nexusMoveLocation, actingPlayerIndex = State.playerIndex) => {
+            const newP = JSON.parse(JSON.stringify(State.game.players));
+            const myP = newP[actingPlayerIndex];
+
+            let totalCost = 0;
+            let newLogs = [...State.game.log];
+            if (nexusMoveLocation) {
+                myP.nexusLocation = nexusMoveLocation;
+                newLogs.push(`${myP.displayName} moved Nexus.`);
+            }
+
+            buildingsToPlace.forEach(b => {
+                const newBuilding = { type: b.type, location: b.location, hp: CONSTANTS.BUILDING_HP };
+                if (b.type === 'mirror') {
+                    newBuilding.orientation = b.orientation || 'N';
+                }
+                myP.buildings.push(newBuilding);
+                totalCost += 1; 
+            });
+
+            const finalCost = totalCost; // AI pays costs too
+            
+            // Specific log for AI clarity
+            if(totalCost > 0) newLogs.push(`${myP.displayName} placed ${totalCost} buildings.`);
+
+            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+                players: newP,
+                energyPool: (State.game.energyPool - finalCost) + State.game.pendingEnergyRefund,
+                turnBudget: State.game.turnBudget - finalCost,
+                phase: 'attack', // Note: In normal flow, confirm just goes to phase 'attack', explicit EndPhase might be redundant but safe
+                pendingEnergyRefund: 0,
+                lastUpdated: Date.now(),
+                log: [...newLogs, "Attack Phase."]
+            });
+        },
+
+        // MODIFIED: Accepts actingPlayerIndex
+        endPhase: async (actingPlayerIndex = State.playerIndex) => {
+            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+                phase: 'attack',
+                lastUpdated: Date.now(),
+                log: [...State.game.log, "Attack Phase."]
+            });
+        },
+
+        // MODIFIED: Accepts actingPlayerIndex
+        attack: async (dx, dy, actingPlayerIndex = State.playerIndex) => {
+            try {
+                // Calculate start location based on ACTING player
+                const startLoc = State.game.players[actingPlayerIndex].nexusLocation;
+                const { path, hits, log } = GameLogic.traceLaser(startLoc, [dx, dy], State.game);
+                
+                const newP = JSON.parse(JSON.stringify(State.game.players));
+                let destroyedCount = 0;
+                let gameOver = false;
+                let winner = -1;
+
+                hits.forEach(h => {
+                    if (h.type === 'nexus') {
+                        newP[h.ownerIdx].nexusHP--;
+                        if(newP[h.ownerIdx].nexusHP <= 0) { 
+                            gameOver = true; 
+                            winner = (h.ownerIdx + 1) % newP.length; 
+                        }
+                    } else {
+                        newP[h.ownerIdx].buildings = newP[h.ownerIdx].buildings.filter(b => 
+                            !(b.location[0] === h.location[0] && b.location[1] === h.location[1])
+                        );
+                        destroyedCount++;
+                    }
+                });
+
+                const nextTurn = (State.game.turn + 1) % newP.length;
+                const nextPool = State.game.energyPool;
+                const nextPlayer = newP[nextTurn];
+                const nextPlayerPylons = nextPlayer?.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
+                const newTurnBudget = Math.min(nextPlayerPylons + 1, nextPool);
+                
+                if(nextPlayer?.nexusLocation) nextPlayer.nexusStartLoc = nextPlayer.nexusLocation;
+
+                let updates = {
+                    players: newP,
+                    log: [...State.game.log, ...log],
+                    lastShotVector: [dx, dy],
+                    lastLaserPath: JSON.stringify(path),
+                    lastAttackId: Date.now(),
+                    lastUpdated: Date.now(),
+                    turn: nextTurn,
+                    phase: 'buyMove',
+                    energyPool: nextPool,
+                    turnBudget: newTurnBudget,
+                    pendingEnergyRefund: destroyedCount
+                };
+                
+                if(gameOver) {
+                    updates.status = 'gameOver';
+                    updates.winner = winner;
+                    updates.log.push("GAME OVER!");
+                }
+
+                await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
+                
+            } catch (err) {
+                console.error("Attack Error:", err);
+                UIManager.toast("Error attacking: " + err.message);
+            }
+        },
     }
 };
 
@@ -1859,6 +2059,13 @@ const Handlers = {
             const energy = DOM.spEnergySelect.value;
             const hp = DOM.spNexusHpSelect.value;
             API.game.startSandbox(parseInt(energy), parseInt(hp));
+        };
+
+        DOM.$('#start-ai-btn').disabled = false; // Ensure it's enabled via JS if HTML isn't enough
+        DOM.$('#start-ai-btn').onclick = () => {
+            const energy = DOM.spEnergySelect.value;
+            const hp = DOM.spNexusHpSelect.value;
+            API.game.startAIGame(parseInt(energy), parseInt(hp));
         };
 
 
